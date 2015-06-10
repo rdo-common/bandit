@@ -12,12 +12,12 @@ BuildRequires: python-pip
 BuildRequires: python-pbr
 
 %description
-Bandit provides a framework for performing security analysis of Python source 
+Bandit provides a framework for performing security analysis of Python source
 code, utilizing the ast module from the Python standard library.
 
-The ast module is used to convert source code into a parsed tree of Python 
+The ast module is used to convert source code into a parsed tree of Python
 syntax nodes. Bandit allows users to define custom tests that are performed
-against those nodes. At the completion of testing, a report is generated 
+against those nodes. At the completion of testing, a report is generated
 that lists security issues identified within the target source code.
 %prep
 %setup -q
@@ -31,13 +31,13 @@ that lists security issues identified within the target source code.
 mv -f %{buildroot}/usr/etc %{buildroot}/etc/
 
 %check
-# the tests requires internet access, with pip install being run 
+# the tests requires internet access, with pip install being run
 # so they are disabled for now, since koji block outgoing connexion
 # tox -epy27
 
 %files
 %doc AUTHORS ChangeLog README.rst
-%doc docs examples 
+%doc docs examples
 %license LICENSE
 %{_bindir}/bandit
 %{python2_sitelib}/%{name}
