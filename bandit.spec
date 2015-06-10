@@ -1,5 +1,5 @@
 Name: bandit
-Version: 0.10.1
+Version: 0.11.0
 Release: 1%{?dist}
 Summary: A framework for performing security analysis of Python source code
 License: ASL 2.0
@@ -27,8 +27,9 @@ that lists security issues identified within the target source code.
 
 %install
 %{__python2} setup.py install --skip-build --root %{buildroot}
-# bandit install his configuration file in /usr/etc/, so that's the easiest fix
-mv -f %{buildroot}/usr/etc %{buildroot}/etc/
+# bandit install his configuration file in %{python2_sitelib}/%{name}, so that's the easiest fix
+mkdir -p %{buildroot}/%{_sysconfdir}
+mv -f %{buildroot}/%{python2_sitelib}/%{name}/config %{buildroot}/%{_sysconfdir}/bandit
 
 %check
 # the tests requires internet access, with pip install being run
@@ -36,7 +37,7 @@ mv -f %{buildroot}/usr/etc %{buildroot}/etc/
 # tox -epy27
 
 %files
-%doc AUTHORS ChangeLog README.rst
+%doc AUTHORS ChangeLog README.md
 %doc docs examples
 %license LICENSE
 %{_bindir}/bandit
@@ -46,5 +47,8 @@ mv -f %{buildroot}/usr/etc %{buildroot}/etc/
 %dir %{_sysconfdir}/%{name}
 
 %changelog
+* Wed Jun 10 2015 Michael Scherer <misc@zarb.org> 0.11.0-1
+- new version 0.11.0
+
 * Fri May 01 2015 Michael Scherer <misc@zarb.org> 0.10.1-1
 - Initial package
