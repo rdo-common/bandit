@@ -1,6 +1,6 @@
 Name: bandit
 Version: 0.11.0
-Release: 1%{?dist}
+Release: 2%{?dist}
 Summary: A framework for performing security analysis of Python source code
 License: ASL 2.0
 URL: https://wiki.openstack.org/wiki/Security/Projects/Bandit
@@ -47,6 +47,9 @@ mv -f %{buildroot}/%{python2_sitelib}/%{name}/config %{buildroot}/%{_sysconfdir}
 %dir %{_sysconfdir}/%{name}
 
 %changelog
+* Wed Jun 17 2015 Fedora Release Engineering <rel-eng@lists.fedoraproject.org> - 0.11.0-2
+- Rebuilt for https://fedoraproject.org/wiki/Fedora_23_Mass_Rebuild
+
 * Wed Jun 10 2015 Michael Scherer <misc@zarb.org> 0.11.0-1
 - new version 0.11.0
 
