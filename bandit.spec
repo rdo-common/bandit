@@ -7,6 +7,7 @@ URL: https://wiki.openstack.org/wiki/Security/Projects/Bandit
 Source0: https://pypi.python.org/packages/source/b/%{name}/%{name}-%{version}.tar.gz
 BuildArch: noarch
 Requires: PyYAML
+Requires: python-stevedore
 Requires: python-appdirs
 BuildRequires: python2-devel
 BuildRequires: python-pip
@@ -51,6 +52,7 @@ mv -f %{buildroot}/%{_prefix}/%{_sysconfdir}/bandit  %{buildroot}/%{_sysconfdir}
 %changelog
 * Thu Aug 20 2015 Michael Scherer <misc@zarb.org> 0.13.2-1
 - new version 0.13.2
+- add requires on python-stevedore, fix #1254589
 
 * Sat Jul 11 2015 Michael Scherer <misc@zarb.org> 0.12.0-1
 - new version 0.12.0
