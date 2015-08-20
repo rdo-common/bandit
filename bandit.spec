@@ -1,10 +1,10 @@
 Name: bandit
-Version: 0.12.0
+Version: 0.13.2
 Release: 1%{?dist}
 Summary: A framework for performing security analysis of Python source code
 License: ASL 2.0
 URL: https://wiki.openstack.org/wiki/Security/Projects/Bandit
-Source0: http://tarballs.openstack.org/%{name}/%{name}-%{version}.tar.gz
+Source0: https://pypi.python.org/packages/source/b/%{name}/%{name}-%{version}.tar.gz
 BuildArch: noarch
 Requires: PyYAML
 BuildRequires: python2-devel
@@ -29,7 +29,7 @@ that lists security issues identified within the target source code.
 %{__python2} setup.py install --skip-build --root %{buildroot}
 # bandit install his configuration file in %{python2_sitelib}/%{name}, so that's the easiest fix
 mkdir -p %{buildroot}/%{_sysconfdir}
-mv -f %{buildroot}/%{python2_sitelib}/%{name}/config %{buildroot}/%{_sysconfdir}/bandit
+mv -f %{buildroot}/%{_prefix}/%{_sysconfdir}/bandit  %{buildroot}/%{_sysconfdir}/bandit
 
 %check
 # the tests requires internet access, with pip install being run
@@ -37,7 +37,7 @@ mv -f %{buildroot}/%{python2_sitelib}/%{name}/config %{buildroot}/%{_sysconfdir}
 # tox -epy27
 
 %files
-%doc AUTHORS ChangeLog README.md
+%doc AUTHORS ChangeLog README.rst
 %doc docs examples
 %license LICENSE
 %{_bindir}/bandit
@@ -45,8 +45,12 @@ mv -f %{buildroot}/%{python2_sitelib}/%{name}/config %{buildroot}/%{_sysconfdir}
 %{python2_sitelib}/%{name}-%{version}-py%{python2_version}.egg-info
 %config(noreplace) %{_sysconfdir}/%{name}/%{name}.yaml
 %dir %{_sysconfdir}/%{name}
+%{_datarootdir}/%{name}
 
 %changelog
+* Thu Aug 20 2015 Michael Scherer <misc@zarb.org> 0.13.2-1
+- new version 0.13.2
+
 * Sat Jul 11 2015 Michael Scherer <misc@zarb.org> 0.12.0-1
 - new version 0.12.0
 
