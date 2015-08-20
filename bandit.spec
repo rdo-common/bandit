@@ -7,6 +7,7 @@ URL: https://wiki.openstack.org/wiki/Security/Projects/Bandit
 Source0: https://pypi.python.org/packages/source/b/%{name}/%{name}-%{version}.tar.gz
 BuildArch: noarch
 Requires: PyYAML
+Requires: python-appdirs
 BuildRequires: python2-devel
 BuildRequires: python-pip
 BuildRequires: python-pbr
