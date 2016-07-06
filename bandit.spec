@@ -1,3 +1,7 @@
+# the tests requires internet access, with pip install being run
+# so they are disabled for now, since koji block outgoing connexion
+%global with_tests 0
+
 Name: bandit
 Version: 1.0.1
 Release: 1%{?dist}
@@ -10,7 +14,10 @@ Requires: python3-PyYAML
 Requires: python3-stevedore
 Requires: python3-appdirs
 BuildRequires: python3-devel
+BuildRequires: python3-setuptools
+%if 0%{?with_tests}
 BuildRequires: python3-pip
+%endif
 BuildRequires: python3-pbr
 
 %description
@@ -31,9 +38,9 @@ that lists security issues identified within the target source code.
 %{__python3} setup.py install --skip-build --root %{buildroot}
 
 %check
-# the tests requires internet access, with pip install being run
-# so they are disabled for now, since koji block outgoing connexion
-# tox -epy27
+%if 0%{?with_tests}
+tox -epy27
+%endif
 
 %files
 %doc AUTHORS ChangeLog README.rst
