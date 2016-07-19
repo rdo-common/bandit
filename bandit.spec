@@ -4,7 +4,7 @@
 
 Name: bandit
 Version: 1.0.1
-Release: 1%{?dist}
+Release: 2%{?dist}
 Summary: A framework for performing security analysis of Python source code
 License: ASL 2.0
 URL: https://wiki.openstack.org/wiki/Security/Projects/Bandit
@@ -54,6 +54,9 @@ tox -epy27
 %{python3_sitelib}/%{name}-%{version}-py%{python3_version}.egg-info
 
 %changelog
+* Tue Jul 19 2016 Fedora Release Engineering <rel-eng@lists.fedoraproject.org> - 1.0.1-2
+- https://fedoraproject.org/wiki/Changes/Automatic_Provides_for_Python_RPM_Packages
+
 
 * Thu Apr 21 2016 Michael Scherer <misc@zarb.org> - 1.0.1-1
 - update to 1.0.1
