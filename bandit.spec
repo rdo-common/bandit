@@ -3,12 +3,12 @@
 %global with_tests 0
 
 Name: bandit
-Version: 1.0.1
-Release: 5%{?dist}
+Version: 1.4.0
+Release: 1%{?dist}
 Summary: A framework for performing security analysis of Python source code
 License: ASL 2.0
 URL: https://wiki.openstack.org/wiki/Security/Projects/Bandit
-Source0: https://pypi.python.org/packages/source/b/%{name}/%{name}-%{version}.tar.gz
+Source0: https://files.pythonhosted.org/packages/source/b/%{name}/%{name}-%{version}.tar.gz
 BuildArch: noarch
 Requires: python3-PyYAML
 Requires: python3-stevedore
@@ -54,6 +54,9 @@ tox -epy27
 %{python3_sitelib}/%{name}-%{version}-py%{python3_version}.egg-info
 
 %changelog
+* Tue Sep 19 2017 Marek Cermak <macermak@redhat.com> - 1.4.0-1
+- new version 1.4.0
+
 * Wed Jul 26 2017 Fedora Release Engineering <releng@fedoraproject.org> - 1.0.1-5
 - Rebuilt for https://fedoraproject.org/wiki/Fedora_27_Mass_Rebuild
 
