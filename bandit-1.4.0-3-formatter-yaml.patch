@@ -1,0 +1,1998 @@
+From 96632b53eb20ab6e572c2f147c114a1f626df738 Mon Sep 17 00:00:00 2001
+From: Philip Jones <philip.graham.jones@gmail.com>
+Date: Fri, 30 Dec 2016 19:21:03 +0000
+Subject: [PATCH 01/43] Alter SQL Injection plugin SQL check
+
+The previous version assumed the SQL query would start with `select`,
+`insert into`, `update` or `delete from` which rules out queries that
+are not so simple, for example queries using `with` such as:
+
+   WITH cte AS (query)
+   SELECT something FROM cte;
+
+This version losens the criteria and considers any string with simple
+SQL grammar (e.g. `select` followed by `from` anywhere within) as SQL.
+
+Change-Id: I4c95842474e71aed61abc4bc878f3565a907f7c7
+---
+ bandit/plugins/injection_sql.py     | 15 ++++++++++-----
+ examples/sql_statements.py          |  2 ++
+ tests/functional/test_functional.py |  4 ++--
+ 3 files changed, 14 insertions(+), 7 deletions(-)
+
+diff --git a/bandit/plugins/injection_sql.py b/bandit/plugins/injection_sql.py
+index 89b4e68..e284e4c 100644
+--- a/bandit/plugins/injection_sql.py
++++ b/bandit/plugins/injection_sql.py
+@@ -60,18 +60,23 @@ If so, a MEDIUM issue is reported. For example:
+ """
+ 
+ import ast
++import re
+ 
+ import bandit
+ from bandit.core import test_properties as test
+ from bandit.core import utils
+ 
++SIMPLE_SQL_RE = re.compile(
++    r'(select\s.*from\s|'
++    r'delete\s+from\s|'
++    r'insert\s+into\s.*values\s|'
++    r'update\s.*set\s)',
++    re.IGNORECASE | re.DOTALL,
++)
++
+ 
+ def _check_string(data):
+-    val = data.lower()
+-    return ((val.startswith('select ') and ' from ' in val) or
+-            val.startswith('insert into') or
+-            (val.startswith('update ') and ' set ' in val) or
+-            val.startswith('delete from '))
++    return SIMPLE_SQL_RE.search(data) is not None
+ 
+ 
+ def _evaluate_ast(node):
+diff --git a/examples/sql_statements.py b/examples/sql_statements.py
+index 66158df..51abcff 100644
+--- a/examples/sql_statements.py
++++ b/examples/sql_statements.py
+@@ -5,6 +5,8 @@ query = "SELECT * FROM foo WHERE id = '%s'" % identifier
+ query = "INSERT INTO foo VALUES ('a', 'b', '%s')" % value
+ query = "DELETE FROM foo WHERE id = '%s'" % identifier
+ query = "UPDATE foo SET value = 'b' WHERE id = '%s'" % identifier
++query = """WITH cte AS (SELECT x FROM foo)
++SELECT x FROM cte WHERE x = '%s'""" % identifier
+ 
+ # bad
+ cur.execute("SELECT * FROM foo WHERE id = '%s'" % identifier)
+diff --git a/tests/functional/test_functional.py b/tests/functional/test_functional.py
+index 5578c6a..6d22ab6 100644
+--- a/tests/functional/test_functional.py
++++ b/tests/functional/test_functional.py
+@@ -292,8 +292,8 @@ class FunctionalTests(testtools.TestCase):
+     def test_sql_statements(self):
+         '''Test for SQL injection through string building.'''
+         expect = {
+-            'SEVERITY': {'MEDIUM': 11},
+-            'CONFIDENCE': {'LOW': 6, 'MEDIUM': 5}}
++            'SEVERITY': {'MEDIUM': 12},
++            'CONFIDENCE': {'LOW': 7, 'MEDIUM': 5}}
+         self.check_example('sql_statements.py', expect)
+ 
+     def test_ssl_insecure_version(self):
+-- 
+2.13.6
+
+From d4e213445aa4e5860936faf50f570fe00bdd0a44 Mon Sep 17 00:00:00 2001
+From: Eric Brown <browne@vmware.com>
+Date: Thu, 12 Jan 2017 23:53:24 -0800
+Subject: [PATCH 02/43] Add Cryptodome to blacklist and weak ciphers/hash
+
+As stated in the bug, the PyCryptodomex package reintroduces
+PyCrypto, but with a different namespace. Therefore Bandit should
+also include Cryptodome in its checks.
+
+Change-Id: I6a02f97747420cedfb4523917ea0083ed5792d7a
+Closes-Bug: #1655975
+---
+ bandit/blacklists/calls.py               | 16 +++++++++++
+ bandit/plugins/weak_cryptographic_key.py |  2 ++
+ examples/ciphers.py                      | 48 ++++++++++++++++++++++----------
+ examples/crypto-md5.py                   |  7 +++++
+ examples/weak_cryptographic_key_sizes.py | 30 +++++++++++++-------
+ tests/functional/test_functional.py      | 12 ++++----
+ 6 files changed, 84 insertions(+), 31 deletions(-)
+
+diff --git a/bandit/blacklists/calls.py b/bandit/blacklists/calls.py
+index 5d9de7f..01f2ce5 100644
+--- a/bandit/blacklists/calls.py
++++ b/bandit/blacklists/calls.py
+@@ -64,6 +64,9 @@ Use of insecure MD2, MD4, or MD5 hash function.
+ |      |                     | - Crypto.Hash.MD2.new              |           |
+ |      |                     | - Crypto.Hash.MD4.new              |           |
+ |      |                     | - Crypto.Hash.MD5.new              |           |
++|      |                     | - Cryptodome.Hash.MD2.new          |           |
++|      |                     | - Cryptodome.Hash.MD4.new          |           |
++|      |                     | - Cryptodome.Hash.MD5.new          |           |
+ |      |                     | - cryptography.hazmat.primitives   |           |
+ |      |                     |   .hashes.MD5                      |           |
+ +------+---------------------+------------------------------------+-----------+
+@@ -82,6 +85,11 @@ as AES.
+ |      |                     | - Crypto.Cipher.Blowfish.new       |           |
+ |      |                     | - Crypto.Cipher.DES.new            |           |
+ |      |                     | - Crypto.Cipher.XOR.new            |           |
++|      |                     | - Cryptodome.Cipher.ARC2.new       |           |
++|      |                     | - Cryptodome.Cipher.ARC4.new       |           |
++|      |                     | - Cryptodome.Cipher.Blowfish.new   |           |
++|      |                     | - Cryptodome.Cipher.DES.new        |           |
++|      |                     | - Cryptodome.Cipher.XOR.new        |           |
+ |      |                     | - cryptography.hazmat.primitives   |           |
+ |      |                     |   .ciphers.algorithms.ARC4         |           |
+ |      |                     | - cryptography.hazmat.primitives   |           |
+@@ -313,6 +321,9 @@ def gen_blacklist():
+          'Crypto.Hash.MD2.new',
+          'Crypto.Hash.MD4.new',
+          'Crypto.Hash.MD5.new',
++         'Cryptodome.Hash.MD2.new',
++         'Cryptodome.Hash.MD4.new',
++         'Cryptodome.Hash.MD5.new',
+          'cryptography.hazmat.primitives.hashes.MD5'],
+         'Use of insecure MD2, MD4, or MD5 hash function.'
+         ))
+@@ -324,6 +335,11 @@ def gen_blacklist():
+          'Crypto.Cipher.Blowfish.new',
+          'Crypto.Cipher.DES.new',
+          'Crypto.Cipher.XOR.new',
++         'Cryptodome.Cipher.ARC2.new',
++         'Cryptodome.Cipher.ARC4.new',
++         'Cryptodome.Cipher.Blowfish.new',
++         'Cryptodome.Cipher.DES.new',
++         'Cryptodome.Cipher.XOR.new',
+          'cryptography.hazmat.primitives.ciphers.algorithms.ARC4',
+          'cryptography.hazmat.primitives.ciphers.algorithms.Blowfish',
+          'cryptography.hazmat.primitives.ciphers.algorithms.IDEA'],
+diff --git a/bandit/plugins/weak_cryptographic_key.py b/bandit/plugins/weak_cryptographic_key.py
+index 7411e2d..fba061b 100644
+--- a/bandit/plugins/weak_cryptographic_key.py
++++ b/bandit/plugins/weak_cryptographic_key.py
+@@ -106,6 +106,8 @@ def _weak_crypto_key_size_pycrypto(context):
+     func_key_type = {
+         'Crypto.PublicKey.DSA.generate': 'DSA',
+         'Crypto.PublicKey.RSA.generate': 'RSA',
++        'Cryptodome.PublicKey.DSA.generate': 'DSA',
++        'Cryptodome.PublicKey.RSA.generate': 'RSA',
+     }
+     key_type = func_key_type.get(context.call_function_name_qual)
+     if key_type:
+diff --git a/examples/ciphers.py b/examples/ciphers.py
+index ff334d4..7e0762d 100644
+--- a/examples/ciphers.py
++++ b/examples/ciphers.py
+@@ -1,8 +1,13 @@
+-from Crypto.Cipher import ARC2
+-from Crypto.Cipher import ARC4
+-from Crypto.Cipher import Blowfish
+-from Crypto.Cipher import DES
+-from Crypto.Cipher import XOR
++from Crypto.Cipher import ARC2 as pycrypto_arc2
++from Crypto.Cipher import ARC4 as pycrypto_arc4
++from Crypto.Cipher import Blowfish as pycrypto_blowfish
++from Crypto.Cipher import DES as pycrypto_des
++from Crypto.Cipher import XOR as pycrypto_xor
++from Cryptodome.Cipher import ARC2 as pycryptodomex_arc2
++from Cryptodome.Cipher import ARC4 as pycryptodomex_arc4
++from Cryptodome.Cipher import Blowfish as pycryptodomex_blowfish
++from Cryptodome.Cipher import DES as pycryptodomex_des
++from Cryptodome.Cipher import XOR as pycryptodomex_xor
+ from Crypto.Hash import SHA
+ from Crypto import Random
+ from Crypto.Util import Counter
+@@ -13,36 +18,49 @@ from cryptography.hazmat.backends import default_backend
+ from struct import pack
+ 
+ key = b'Sixteen byte key'
+-iv = Random.new().read(ARC2.block_size)
+-cipher = ARC2.new(key, ARC2.MODE_CFB, iv)
++iv = Random.new().read(pycrypto_arc2.block_size)
++cipher = pycrypto_arc2.new(key, pycrypto_arc2.MODE_CFB, iv)
++msg = iv + cipher.encrypt(b'Attack at dawn')
++cipher = pycryptodomex_arc2.new(key, pycryptodomex_arc2.MODE_CFB, iv)
+ msg = iv + cipher.encrypt(b'Attack at dawn')
+ 
+ key = b'Very long and confidential key'
+ nonce = Random.new().read(16)
+ tempkey = SHA.new(key+nonce).digest()
+-cipher = ARC4.new(tempkey)
++cipher = pycrypto_arc4.new(tempkey)
++msg = nonce + cipher.encrypt(b'Open the pod bay doors, HAL')
++cipher = pycryptodomex_arc4.new(tempkey)
+ msg = nonce + cipher.encrypt(b'Open the pod bay doors, HAL')
+ 
+-bs = Blowfish.block_size
+-key = b'An arbitrarily long key'
+ iv = Random.new().read(bs)
+-cipher = Blowfish.new(key, Blowfish.MODE_CBC, iv)
++key = b'An arbitrarily long key'
+ plaintext = b'docendo discimus '
+ plen = bs - divmod(len(plaintext),bs)[1]
+ padding = [plen]*plen
+ padding = pack('b'*plen, *padding)
++bs = pycrypto_blowfish.block_size
++cipher = pycrypto_blowfish.new(key, pycrypto_blowfish.MODE_CBC, iv)
++msg = iv + cipher.encrypt(plaintext + padding)
++bs = pycryptodomex_blowfish.block_size
++cipher = pycryptodomex_blowfish.new(key, pycryptodomex_blowfish.MODE_CBC, iv)
+ msg = iv + cipher.encrypt(plaintext + padding)
+ 
+ key = b'-8B key-'
+-nonce = Random.new().read(DES.block_size/2)
+-ctr = Counter.new(DES.block_size*8/2, prefix=nonce)
+-cipher = DES.new(key, DES.MODE_CTR, counter=ctr)
+ plaintext = b'We are no longer the knights who say ni!'
++nonce = Random.new().read(pycrypto_des.block_size/2)
++ctr = Counter.new(pycrypto_des.block_size*8/2, prefix=nonce)
++cipher = pycrypto_des.new(key, pycrypto_des.MODE_CTR, counter=ctr)
++msg = nonce + cipher.encrypt(plaintext)
++nonce = Random.new().read(pycryptodomex_des.block_size/2)
++ctr = Counter.new(pycryptodomex_des.block_size*8/2, prefix=nonce)
++cipher = pycryptodomex_des.new(key, pycryptodomex_des.MODE_CTR, counter=ctr)
+ msg = nonce + cipher.encrypt(plaintext)
+ 
+ key = b'Super secret key'
+-cipher = XOR.new(key)
+ plaintext = b'Encrypt me'
++cipher = pycrypto_xor.new(key)
++msg = cipher.encrypt(plaintext)
++cipher = pycryptodomex_xor.new(key)
+ msg = cipher.encrypt(plaintext)
+ 
+ cipher = Cipher(algorithms.ARC4(key), mode=None, backend=default_backend())
+diff --git a/examples/crypto-md5.py b/examples/crypto-md5.py
+index c9dc143..d5b85c2 100644
+--- a/examples/crypto-md5.py
++++ b/examples/crypto-md5.py
+@@ -2,6 +2,9 @@ from cryptography.hazmat.primitives import hashes
+ from Crypto.Hash import MD2 as pycrypto_md2
+ from Crypto.Hash import MD4 as pycrypto_md4
+ from Crypto.Hash import MD5 as pycrypto_md5
++from Cryptodome.Hash import MD2 as pycryptodomex_md2
++from Cryptodome.Hash import MD4 as pycryptodomex_md4
++from Cryptodome.Hash import MD5 as pycryptodomex_md5
+ import hashlib
+ 
+ hashlib.md5(1)
+@@ -15,4 +18,8 @@ pycrypto_md2.new()
+ pycrypto_md4.new()
+ pycrypto_md5.new()
+ 
++pycryptodomex_md2.new()
++pycryptodomex_md4.new()
++pycryptodomex_md5.new()
++
+ hashes.MD5()
+diff --git a/examples/weak_cryptographic_key_sizes.py b/examples/weak_cryptographic_key_sizes.py
+index 42d8dd1..f2443b5 100644
+--- a/examples/weak_cryptographic_key_sizes.py
++++ b/examples/weak_cryptographic_key_sizes.py
+@@ -2,8 +2,10 @@ from cryptography.hazmat import backends
+ from cryptography.hazmat.primitives.asymmetric import dsa
+ from cryptography.hazmat.primitives.asymmetric import ec
+ from cryptography.hazmat.primitives.asymmetric import rsa
+-from Crypto.PublicKey import DSA
+-from Crypto.PublicKey import RSA
++from Crypto.PublicKey import DSA as pycrypto_dsa
++from Crypto.PublicKey import RSA as pycrypto_rsa
++from Cryptodome.PublicKey import DSA as pycryptodomex_dsa
++from Cryptodome.PublicKey import RSA as pycryptodomex_rsa
+ 
+ 
+ # Correct
+@@ -14,8 +16,10 @@ ec.generate_private_key(curve=ec.SECP384R1,
+ rsa.generate_private_key(public_exponent=65537,
+                          key_size=2048,
+                          backend=backends.default_backend())
+-DSA.generate(bits=2048)
+-RSA.generate(bits=2048)
++pycrypto_dsa.generate(bits=2048)
++pycrypto_rsa.generate(bits=2048)
++pycryptodomex_dsa.generate(bits=2048)
++pycryptodomex_rsa.generate(bits=2048)
+ 
+ # Also correct: without keyword args
+ dsa.generate_private_key(4096,
+@@ -25,8 +29,10 @@ ec.generate_private_key(ec.SECP256K1,
+ rsa.generate_private_key(3,
+                          4096,
+                          backends.default_backend())
+-DSA.generate(4096)
+-RSA.generate(4096)
++pycrypto_dsa.generate(4096)
++pycrypto_rsa.generate(4096)
++pycryptodomex_dsa.generate(4096)
++pycryptodomex_rsa.generate(4096)
+ 
+ # Incorrect: weak key sizes
+ dsa.generate_private_key(key_size=1024,
+@@ -36,8 +42,10 @@ ec.generate_private_key(curve=ec.SECT163R2,
+ rsa.generate_private_key(public_exponent=65537,
+                          key_size=1024,
+                          backend=backends.default_backend())
+-DSA.generate(bits=1024)
+-RSA.generate(bits=1024)
++pycrypto_dsa.generate(bits=1024)
++pycrypto_rsa.generate(bits=1024)
++pycryptodomex_dsa.generate(bits=1024)
++pycryptodomex_rsa.generate(bits=1024)
+ 
+ # Also incorrect: without keyword args
+ dsa.generate_private_key(512,
+@@ -47,8 +55,10 @@ ec.generate_private_key(ec.SECT163R2,
+ rsa.generate_private_key(3,
+                          512,
+                          backends.default_backend())
+-DSA.generate(512)
+-RSA.generate(512)
++pycrypto_dsa.generate(512)
++pycrypto_rsa.generate(512)
++pycryptodomex_dsa.generate(512)
++pycryptodomex_rsa.generate(512)
+ 
+ # Don't crash when the size is variable
+ rsa.generate_private_key(public_exponent=65537,
+diff --git a/tests/functional/test_functional.py b/tests/functional/test_functional.py
+index 5578c6a..b8b30c7 100644
+--- a/tests/functional/test_functional.py
++++ b/tests/functional/test_functional.py
+@@ -113,14 +113,14 @@ class FunctionalTests(testtools.TestCase):
+ 
+     def test_crypto_md5(self):
+         '''Test the `hashlib.md5` example.'''
+-        expect = {'SEVERITY': {'MEDIUM': 8},
+-                  'CONFIDENCE': {'HIGH': 8}}
++        expect = {'SEVERITY': {'MEDIUM': 11},
++                  'CONFIDENCE': {'HIGH': 11}}
+         self.check_example('crypto-md5.py', expect)
+ 
+     def test_ciphers(self):
+         '''Test the `Crypto.Cipher` example.'''
+-        expect = {'SEVERITY': {'HIGH': 8},
+-                  'CONFIDENCE': {'HIGH': 8}}
++        expect = {'SEVERITY': {'HIGH': 13},
++                  'CONFIDENCE': {'HIGH': 13}}
+         self.check_example('ciphers.py', expect)
+ 
+     def test_cipher_modes(self):
+@@ -465,8 +465,8 @@ class FunctionalTests(testtools.TestCase):
+     def test_weak_cryptographic_key(self):
+         '''Test for weak key sizes.'''
+         expect = {
+-            'SEVERITY': {'MEDIUM': 6, 'HIGH': 4},
+-            'CONFIDENCE': {'HIGH': 10}
++            'SEVERITY': {'MEDIUM': 8, 'HIGH': 6},
++            'CONFIDENCE': {'HIGH': 14}
+         }
+         self.check_example('weak_cryptographic_key_sizes.py', expect)
+ 
+-- 
+2.13.6
+
+From 6ce60806ca8a44d8a8b37050539e2b2f9a54b847 Mon Sep 17 00:00:00 2001
+From: Philip Jones <philip.graham.jones@gmail.com>
+Date: Fri, 30 Dec 2016 19:38:41 +0000
+Subject: [PATCH 03/43] Alter SQL injection plugin to consider .format strings
+
+This considers `"{}".format()` style alongside `"%s" % ` string
+formatting for possible SQL injection vulnerabilities.
+
+Change-Id: If7b09083bd2cc5e48e5d3fd3e8d5e6142fdb67ed
+---
+ bandit/plugins/injection_sql.py     | 27 +++++++++++++++++++--------
+ examples/sql_statements.py          | 13 ++++++-------
+ tests/functional/test_functional.py |  4 ++--
+ 3 files changed, 27 insertions(+), 17 deletions(-)
+
+diff --git a/bandit/plugins/injection_sql.py b/bandit/plugins/injection_sql.py
+index e284e4c..afb63a5 100644
+--- a/bandit/plugins/injection_sql.py
++++ b/bandit/plugins/injection_sql.py
+@@ -27,6 +27,7 @@ some form of string building operation. For example:
+  - "SELECT %s FROM derp;" % var
+  - "SELECT thing FROM " + tab
+  - "SELECT " + val + " FROM " + tab + ...
++ - "SELECT {} FROM derp;".format(var)
+ 
+ Unless care is taken to sanitize and control the input data when building such
+ SQL statement strings, an injection attack becomes possible. If strings of this
+@@ -80,15 +81,25 @@ def _check_string(data):
+ 
+ 
+ def _evaluate_ast(node):
+-    if not isinstance(node.parent, ast.BinOp):
+-        return (False, "")
+-
+-    out = utils.concat_string(node, node.parent)
+-    if isinstance(out[0].parent, ast.Call):  # wrapped in "execute" call?
++    wrapper = None
++    statement = ''
++
++    if isinstance(node.parent, ast.BinOp):
++        out = utils.concat_string(node, node.parent)
++        wrapper = out[0].parent
++        statement = out[1]
++    elif (isinstance(node.parent, ast.Attribute)
++          and node.parent.attr == 'format'):
++        statement = node.s
++        # Hierarchy for "".format() is Wrapper -> Call -> Attribute -> Str
++        wrapper = node.parent.parent.parent
++
++    if isinstance(wrapper, ast.Call):  # wrapped in "execute" call?
+         names = ['execute', 'executemany']
+-        name = utils.get_called_name(out[0].parent)
+-        return (name in names, out[1])
+-    return (False, out[1])
++        name = utils.get_called_name(wrapper)
++        return (name in names, statement)
++    else:
++        return (False, statement)
+ 
+ 
+ @test.checks('Str')
+diff --git a/examples/sql_statements.py b/examples/sql_statements.py
+index 51abcff..1fabb70 100644
+--- a/examples/sql_statements.py
++++ b/examples/sql_statements.py
+@@ -7,12 +7,18 @@ query = "DELETE FROM foo WHERE id = '%s'" % identifier
+ query = "UPDATE foo SET value = 'b' WHERE id = '%s'" % identifier
+ query = """WITH cte AS (SELECT x FROM foo)
+ SELECT x FROM cte WHERE x = '%s'""" % identifier
++# bad alternate forms
++query = "SELECT * FROM foo WHERE id = '" + identifier + "'"
++query = "SELECT * FROM foo WHERE id = '{}'".format(identifier)
+ 
+ # bad
+ cur.execute("SELECT * FROM foo WHERE id = '%s'" % identifier)
+ cur.execute("INSERT INTO foo VALUES ('a', 'b', '%s')" % value)
+ cur.execute("DELETE FROM foo WHERE id = '%s'" % identifier)
+ cur.execute("UPDATE foo SET value = 'b' WHERE id = '%s'" % identifier)
++# bad alternate forms
++cur.execute("SELECT * FROM foo WHERE id = '" + identifier + "'")
++cur.execute("SELECT * FROM foo WHERE id = '{}'".format(identifier))
+ 
+ # good
+ cur.execute("SELECT * FROM foo WHERE id = '%s'", identifier)
+@@ -20,13 +26,6 @@ cur.execute("INSERT INTO foo VALUES ('a', 'b', '%s')", value)
+ cur.execute("DELETE FROM foo WHERE id = '%s'", identifier)
+ cur.execute("UPDATE foo SET value = 'b' WHERE id = '%s'", identifier)
+ 
+-# bad
+-query = "SELECT " + val + " FROM " + val +" WHERE id = " + val
+-
+-# bad
+-cur.execute("SELECT " + val + " FROM " + val +" WHERE id = " + val)
+-
+-
+ # bug: https://bugs.launchpad.net/bandit/+bug/1479625
+ def a():
+     def b():
+diff --git a/tests/functional/test_functional.py b/tests/functional/test_functional.py
+index 1938583..afc206e 100644
+--- a/tests/functional/test_functional.py
++++ b/tests/functional/test_functional.py
+@@ -292,8 +292,8 @@ class FunctionalTests(testtools.TestCase):
+     def test_sql_statements(self):
+         '''Test for SQL injection through string building.'''
+         expect = {
+-            'SEVERITY': {'MEDIUM': 12},
+-            'CONFIDENCE': {'LOW': 7, 'MEDIUM': 5}}
++            'SEVERITY': {'MEDIUM': 14},
++            'CONFIDENCE': {'LOW': 8, 'MEDIUM': 6}}
+         self.check_example('sql_statements.py', expect)
+ 
+     def test_ssl_insecure_version(self):
+-- 
+2.13.6
+
+From 52c4b9be68258427d8b051c1bdd5dfed94c0a3ab Mon Sep 17 00:00:00 2001
+From: Eric Brown <browne@vmware.com>
+Date: Mon, 30 Jan 2017 14:08:03 -0800
+Subject: [PATCH 04/43] Use https for references to openstack.org
+
+The openstack.org pages now support https and our references to
+the site should by default be one signed by the organization.
+
+Change-Id: I83d2df500e2e30047494c201a2ab39820ffd1502
+---
+ bandit/core/docs_utils.py | 2 +-
+ bandit/formatters/html.py | 4 ++--
+ 2 files changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/bandit/core/docs_utils.py b/bandit/core/docs_utils.py
+index 171eb27..6c2a640 100644
+--- a/bandit/core/docs_utils.py
++++ b/bandit/core/docs_utils.py
+@@ -15,7 +15,7 @@
+ # under the License.
+ 
+ # where our docs are hosted
+-BASE_URL = 'http://docs.openstack.org/developer/bandit/'
++BASE_URL = 'https://docs.openstack.org/developer/bandit/'
+ 
+ 
+ def get_url(bid):
+diff --git a/bandit/formatters/html.py b/bandit/formatters/html.py
+index 44917f2..04c289f 100644
+--- a/bandit/formatters/html.py
++++ b/bandit/formatters/html.py
+@@ -125,9 +125,9 @@ This formatter outputs the issues as HTML.
+         <b>Confidence: </b>HIGH<br>
+         <b>File: </b><a href="examples/yaml_load.py"
+         target="_blank">examples/yaml_load.py</a> <br>
+-        <b>More info: </b><a href="http://docs.openstack.org/developer/bandit/
++        <b>More info: </b><a href="https://docs.openstack.org/developer/bandit/
+         plugins/yaml_load.html" target="_blank">
+-        http://docs.openstack.org/developer/bandit/plugins/yaml_load.html</a>
++        https://docs.openstack.org/developer/bandit/plugins/yaml_load.html</a>
+         <br>
+ 
+     <div class="code">
+-- 
+2.13.6
+
+From e17af5cac241ef9ee72d47b90cb883d28274d5fd Mon Sep 17 00:00:00 2001
+From: Anh Tran <anhtt@vn.fujitsu.com>
+Date: Tue, 7 Feb 2017 10:12:47 +0700
+Subject: [PATCH 05/43] Typo fix: targetting => targeting
+
+Change-Id: Iebfb2186e2824e47f57f53f9480776a9cbf67398
+---
+ bandit/core/test_set.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/bandit/core/test_set.py b/bandit/core/test_set.py
+index 826b5df..2429aeb 100644
+--- a/bandit/core/test_set.py
++++ b/bandit/core/test_set.py
+@@ -112,7 +112,7 @@ class BanditTestSet(object):
+                 plugin.plugin._config = cfg
+             for check in plugin.plugin._checks:
+                 self.tests.setdefault(check, []).append(plugin.plugin)
+-                LOG.debug('added function %s (%s) targetting %s',
++                LOG.debug('added function %s (%s) targeting %s',
+                           plugin.name, plugin.plugin._test_id, check)
+ 
+     def get_tests(self, checktype):
+-- 
+2.13.6
+
+From 32b4714562f3eb860d1a2afba90e0634e231fb09 Mon Sep 17 00:00:00 2001
+From: OpenStack Proposal Bot <openstack-infra@lists.openstack.org>
+Date: Fri, 10 Feb 2017 05:47:05 +0000
+Subject: [PATCH 06/43] Updated from global requirements
+
+Change-Id: I5595e1b03dee7f2fdc7402a8e056ac84a8836040
+---
+ test-requirements.txt | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/test-requirements.txt b/test-requirements.txt
+index 11b6414..9e613c6 100644
+--- a/test-requirements.txt
++++ b/test-requirements.txt
+@@ -11,7 +11,7 @@ testscenarios>=0.4 # Apache-2.0/BSD
+ testtools>=1.4.0 # MIT
+ oslotest>=1.10.0 # Apache-2.0
+ 
+-sphinx!=1.3b1,<1.4,>=1.2.1 # BSD
++sphinx>=1.5.1 # BSD
+ oslosphinx>=4.7.0 # Apache-2.0
+ beautifulsoup4 # MIT
+ reno>=1.8.0 # Apache-2.0
+-- 
+2.13.6
+
+From c924b2b12f1edf0e026e8e13a81005995e20d4fb Mon Sep 17 00:00:00 2001
+From: Eric Brown <browne@vmware.com>
+Date: Mon, 20 Feb 2017 11:20:18 -0800
+Subject: [PATCH 07/43] HTTPSConnection is secure in newer Python
+
+In Python 2.7.9 [1] and 3.4.3 [2], the HTTPSConnection class has
+been fixed to perform all the necessary certificate and hostname
+checks by default.
+
+Therefore, Bandit's warning is only applicable if the module is
+using older versions of Python. Even though Bandit could detect
+the version of Python used for its scan, it cannot ensure that is
+the same version used for running the said scanned module.
+
+This patch modifies the warning message to make this clearer.
+
+[1]: https://docs.python.org/2/library/httplib.html#httplib.HTTPSConnection
+[2]: https://docs.python.org/3.4/library/http.client.html#http.client.HTTPSConnection
+
+Change-Id: I8105137d2cbbf0eb000729a18f43c3db443644d7
+---
+ bandit/blacklists/calls.py | 7 ++++---
+ 1 file changed, 4 insertions(+), 3 deletions(-)
+
+diff --git a/bandit/blacklists/calls.py b/bandit/blacklists/calls.py
+index 01f2ce5..4f62961 100644
+--- a/bandit/blacklists/calls.py
++++ b/bandit/blacklists/calls.py
+@@ -138,8 +138,8 @@ be reviewed.
+ B309: httpsconnection
+ ---------------------
+ 
+-Use of HTTPSConnection does not provide security, see
+-https://wiki.openstack.org/wiki/OSSN/OSSN-0033
++Use of HTTPSConnection on older versions of Python prior to 2.7.9 and 3.4.3 do
++not provide security, see https://wiki.openstack.org/wiki/OSSN/OSSN-0033
+ 
+ +------+---------------------+------------------------------------+-----------+
+ | ID   |  Name               |  Calls                             |  Severity |
+@@ -376,7 +376,8 @@ def gen_blacklist():
+         ['httplib.HTTPSConnection',
+          'http.client.HTTPSConnection',
+          'six.moves.http_client.HTTPSConnection'],
+-        'Use of HTTPSConnection does not provide security, see '
++        'Use of HTTPSConnection on older versions of Python prior to 2.7.9 '
++        'and 3.4.3 do not provide security, see '
+         'https://wiki.openstack.org/wiki/OSSN/OSSN-0033'
+         ))
+ 
+-- 
+2.13.6
+
+From 4cf3af7d4cdaeace8992a6726e20ba63d3a22018 Mon Sep 17 00:00:00 2001
+From: Eric Brown <browne@vmware.com>
+Date: Mon, 20 Feb 2017 13:13:25 -0800
+Subject: [PATCH 08/43] Allow config for high and medium severity key sizes
+
+The severity level of various key sizes of RSA, DSA, and EC are
+currently hard-coded in the weak_cryptographic_key.py itself. This
+patch allows the values to be overriden via the config file mechanism.
+
+Change-Id: I38ad5384e0e6012818bbac10f449840de6fb14ed
+---
+ bandit/plugins/weak_cryptographic_key.py | 40 ++++++++++++++++++++++----------
+ 1 file changed, 28 insertions(+), 12 deletions(-)
+
+diff --git a/bandit/plugins/weak_cryptographic_key.py b/bandit/plugins/weak_cryptographic_key.py
+index fba061b..1c80e64 100644
+--- a/bandit/plugins/weak_cryptographic_key.py
++++ b/bandit/plugins/weak_cryptographic_key.py
+@@ -50,15 +50,30 @@ import bandit
+ from bandit.core import test_properties as test
+ 
+ 
+-def _classify_key_size(key_type, key_size):
++def gen_config(name):
++    if name == 'weak_cryptographic_key':
++        return {
++            'weak_key_size_dsa_high': 1024,
++            'weak_key_size_dsa_medium': 2048,
++            'weak_key_size_rsa_high': 1024,
++            'weak_key_size_rsa_medium': 2048,
++            'weak_key_size_ec_high': 160,
++            'weak_key_size_ec_medium': 224,
++        }
++
++
++def _classify_key_size(config, key_type, key_size):
+     if isinstance(key_size, str):
+         # size provided via a variable - can't process it at the moment
+         return
+ 
+     key_sizes = {
+-        'DSA': [(1024, bandit.HIGH), (2048, bandit.MEDIUM)],
+-        'RSA': [(1024, bandit.HIGH), (2048, bandit.MEDIUM)],
+-        'EC': [(160, bandit.HIGH), (224, bandit.MEDIUM)],
++        'DSA': [(config['weak_key_size_dsa_high'], bandit.HIGH),
++                (config['weak_key_size_dsa_medium'], bandit.MEDIUM)],
++        'RSA': [(config['weak_key_size_rsa_high'], bandit.HIGH),
++                (config['weak_key_size_rsa_medium'], bandit.MEDIUM)],
++        'EC': [(config['weak_key_size_ec_high'], bandit.HIGH),
++               (config['weak_key_size_ec_medium'], bandit.MEDIUM)],
+     }
+ 
+     for size, level in key_sizes[key_type]:
+@@ -70,7 +85,7 @@ def _classify_key_size(key_type, key_size):
+                 (key_type, size))
+ 
+ 
+-def _weak_crypto_key_size_cryptography_io(context):
++def _weak_crypto_key_size_cryptography_io(context, config):
+     func_key_type = {
+         'cryptography.hazmat.primitives.asymmetric.dsa.'
+         'generate_private_key': 'DSA',
+@@ -89,7 +104,7 @@ def _weak_crypto_key_size_cryptography_io(context):
+         key_size = (context.get_call_arg_value('key_size') or
+                     context.get_call_arg_at_position(arg_position[key_type]) or
+                     2048)
+-        return _classify_key_size(key_type, key_size)
++        return _classify_key_size(config, key_type, key_size)
+     elif key_type == 'EC':
+         curve_key_sizes = {
+             'SECP192R1': 192,
+@@ -99,10 +114,10 @@ def _weak_crypto_key_size_cryptography_io(context):
+         curve = (context.get_call_arg_value('curve') or
+                  context.call_args[arg_position[key_type]])
+         key_size = curve_key_sizes[curve] if curve in curve_key_sizes else 224
+-        return _classify_key_size(key_type, key_size)
++        return _classify_key_size(config, key_type, key_size)
+ 
+ 
+-def _weak_crypto_key_size_pycrypto(context):
++def _weak_crypto_key_size_pycrypto(context, config):
+     func_key_type = {
+         'Crypto.PublicKey.DSA.generate': 'DSA',
+         'Crypto.PublicKey.RSA.generate': 'RSA',
+@@ -114,11 +129,12 @@ def _weak_crypto_key_size_pycrypto(context):
+         key_size = (context.get_call_arg_value('bits') or
+                     context.get_call_arg_at_position(0) or
+                     2048)
+-        return _classify_key_size(key_type, key_size)
++        return _classify_key_size(config, key_type, key_size)
+ 
+ 
++@test.takes_config
+ @test.checks('Call')
+ @test.test_id('B505')
+-def weak_cryptographic_key(context):
+-    return (_weak_crypto_key_size_cryptography_io(context) or
+-            _weak_crypto_key_size_pycrypto(context))
++def weak_cryptographic_key(context, config):
++    return (_weak_crypto_key_size_cryptography_io(context, config) or
++            _weak_crypto_key_size_pycrypto(context, config))
+-- 
+2.13.6
+
+From a38056fafaead26e1b7198523b20f323130fa262 Mon Sep 17 00:00:00 2001
+From: Eric Brown <browne@vmware.com>
+Date: Mon, 20 Feb 2017 13:42:59 -0800
+Subject: [PATCH 09/43] Dump bandit config file lists vertically
+
+Currently when using the bandit-config-generator to dump out a
+config file, it looks rather messy because config option values
+that are lists are dumped onto one long line.
+
+So rather than dumping on one line, use the vertical yaml list
+format by specifying default_flow_style=False.
+
+Change-Id: Ic0dc97f19d067471b507421dcb98ac749874e49c
+---
+ bandit/cli/config_generator.py          | 2 +-
+ tests/unit/cli/test_config_generator.py | 3 ++-
+ 2 files changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/bandit/cli/config_generator.py b/bandit/cli/config_generator.py
+index e5d232c..a48c518 100644
+--- a/bandit/cli/config_generator.py
++++ b/bandit/cli/config_generator.py
+@@ -124,7 +124,7 @@ def get_config_settings():
+             if hasattr(fn_module, 'gen_config'):
+                 config[fn_name] = fn_module.gen_config(function._takes_config)
+ 
+-    return yaml.safe_dump(config)
++    return yaml.safe_dump(config, default_flow_style=False)
+ 
+ 
+ def main():
+diff --git a/tests/unit/cli/test_config_generator.py b/tests/unit/cli/test_config_generator.py
+index f85c0a9..1431ab5 100644
+--- a/tests/unit/cli/test_config_generator.py
++++ b/tests/unit/cli/test_config_generator.py
+@@ -85,7 +85,8 @@ class BanditConfigGeneratorTests(testtools.TestCase):
+                 config[plugin.name] = module.gen_config(
+                     function._takes_config)
+         settings = config_generator.get_config_settings()
+-        self.assertEqual(yaml.safe_dump(config), settings)
++        self.assertEqual(yaml.safe_dump(config, default_flow_style=False),
++                         settings)
+ 
+     @mock.patch('sys.argv', ['bandit-config-generator', '--show-defaults'])
+     def test_main_show_defaults(self):
+-- 
+2.13.6
+
+From 87c8b70e7bad5484e3ed9b17c9790108c151dee5 Mon Sep 17 00:00:00 2001
+From: Eric Brown <browne@vmware.com>
+Date: Thu, 23 Feb 2017 13:29:38 -0800
+Subject: [PATCH 10/43] Refactor check_example to be clearer on error
+
+Currently the check_example in test_functional computes sums and
+on error tells the developer the difference in sums, which is
+confusing and error prone.
+
+It also leads to false positives where sums may be correct, but
+the exact number of MEDIUM, HIGH, etc is different. This was the
+case for two tests: test_xml and test_secret_config_option.
+
+The general_hardcoded_password test was also broken for py35
+because it was assuming function args are ast.Name not ast.arg.
+But surprisingly the tests passed because of a syntax error in
+the example.
+
+Change-Id: Icd06fb7ca27a8a01d6442f199775d474d436371b
+---
+ bandit/plugins/general_hardcoded_password.py |   2 +-
+ examples/hardcoded-passwords.py              |  10 +-
+ tests/functional/test_functional.py          | 340 +++++++++++++++++++--------
+ 3 files changed, 247 insertions(+), 105 deletions(-)
+
+diff --git a/bandit/plugins/general_hardcoded_password.py b/bandit/plugins/general_hardcoded_password.py
+index 97e3966..e9f7c3a 100644
+--- a/bandit/plugins/general_hardcoded_password.py
++++ b/bandit/plugins/general_hardcoded_password.py
+@@ -209,7 +209,7 @@ def hardcoded_password_default(context):
+ 
+     # go through all (param, value)s and look for candidates
+     for key, val in zip(context.node.args.args, defs):
+-        if isinstance(key, ast.Name):
++        if isinstance(key, ast.Name) or isinstance(key, ast.arg):
+             check = key.arg if sys.version_info.major > 2 else key.id  # Py3
+             if isinstance(val, ast.Str) and check in CANDIDATES:
+                 return _report(val.s)
+diff --git a/examples/hardcoded-passwords.py b/examples/hardcoded-passwords.py
+index b59794e..221c8f4 100644
+--- a/examples/hardcoded-passwords.py
++++ b/examples/hardcoded-passwords.py
+@@ -13,10 +13,12 @@ def NoMatch2(password):
+     if password == "ajklawejrkl42348swfgkg":
+         print("Nice password!")
+ 
++def doLogin(password="blerg"):
++    pass
++
++def NoMatch3(a, b):
++    pass
++
+ doLogin(password="blerg")
+ password = "blerg"
+ d["password"] = "blerg"
+-
+-
+-def NoMatch3((a, b)):
+-    pass
+diff --git a/tests/functional/test_functional.py b/tests/functional/test_functional.py
+index afc206e..5667001 100644
+--- a/tests/functional/test_functional.py
++++ b/tests/functional/test_functional.py
+@@ -69,17 +69,20 @@ class FunctionalTests(testtools.TestCase):
+         # reset scores for subsequent calls to check_example
+         self.b_mgr.scores = []
+         self.run_example(example_script, ignore_nosec=ignore_nosec)
+-        expected = 0
+-        result = 0
++
++        result = {
++            'SEVERITY': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 0, 'HIGH': 0},
++            'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 0, 'HIGH': 0}
++        }
++
+         for test_scores in self.b_mgr.scores:
+             for score_type in test_scores:
+                 self.assertIn(score_type, expect)
+-                for rating in expect[score_type]:
+-                    expected += (
+-                        expect[score_type][rating] * C.RANKING_VALUES[rating]
+-                    )
+-                result += sum(test_scores[score_type])
+-        self.assertEqual(expected, result)
++                for idx, rank in enumerate(C.RANKING):
++                    result[score_type][rank] = (test_scores[score_type][idx] /
++                                                C.RANKING_VALUES[rank])
++
++        self.assertDictEqual(expect, result)
+ 
+     def check_metrics(self, example_script, expect):
+         '''A helper method to test the metrics being returned.
+@@ -108,34 +111,50 @@ class FunctionalTests(testtools.TestCase):
+ 
+     def test_binding(self):
+         '''Test the bind-to-0.0.0.0 example.'''
+-        expect = {'SEVERITY': {'MEDIUM': 1}, 'CONFIDENCE': {'MEDIUM': 1}}
++        expect = {
++            'SEVERITY': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 1, 'HIGH': 0},
++            'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 1, 'HIGH': 0}
++        }
+         self.check_example('binding.py', expect)
+ 
+     def test_crypto_md5(self):
+         '''Test the `hashlib.md5` example.'''
+-        expect = {'SEVERITY': {'MEDIUM': 11},
+-                  'CONFIDENCE': {'HIGH': 11}}
++        expect = {
++            'SEVERITY': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 11, 'HIGH': 0},
++            'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 0, 'HIGH': 11}
++        }
+         self.check_example('crypto-md5.py', expect)
+ 
+     def test_ciphers(self):
+         '''Test the `Crypto.Cipher` example.'''
+-        expect = {'SEVERITY': {'HIGH': 13},
+-                  'CONFIDENCE': {'HIGH': 13}}
++        expect = {
++            'SEVERITY': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 0, 'HIGH': 13},
++            'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 0, 'HIGH': 13}
++        }
+         self.check_example('ciphers.py', expect)
+ 
+     def test_cipher_modes(self):
+         '''Test for insecure cipher modes.'''
+-        expect = {'SEVERITY': {'MEDIUM': 1}, 'CONFIDENCE': {'HIGH': 1}}
++        expect = {
++            'SEVERITY': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 1, 'HIGH': 0},
++            'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 0, 'HIGH': 1}
++        }
+         self.check_example('cipher-modes.py', expect)
+ 
+     def test_eval(self):
+         '''Test the `eval` example.'''
+-        expect = {'SEVERITY': {'MEDIUM': 3}, 'CONFIDENCE': {'HIGH': 3}}
++        expect = {
++            'SEVERITY': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 3, 'HIGH': 0},
++            'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 0, 'HIGH': 3}
++        }
+         self.check_example('eval.py', expect)
+ 
+     def test_mark_safe(self):
+         '''Test the `mark_safe` example.'''
+-        expect = {'SEVERITY': {'MEDIUM': 1}, 'CONFIDENCE': {'HIGH': 1}}
++        expect = {
++            'SEVERITY': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 1, 'HIGH': 0},
++            'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 0, 'HIGH': 1}
++        }
+         self.check_example('mark_safe.py', expect)
+ 
+     def test_exec(self):
+@@ -143,68 +162,106 @@ class FunctionalTests(testtools.TestCase):
+         filename = 'exec-{}.py'
+         if six.PY2:
+             filename = filename.format('py2')
+-            expect = {'SEVERITY': {'MEDIUM': 2}, 'CONFIDENCE': {'HIGH': 2}}
++            expect = {
++                'SEVERITY': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 2, 'HIGH': 0},
++                'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 0,
++                               'HIGH': 2}
++            }
+         else:
+             filename = filename.format('py3')
+-            expect = {'SEVERITY': {'MEDIUM': 1}, 'CONFIDENCE': {'HIGH': 1}}
++            expect = {
++                'SEVERITY': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 1, 'HIGH': 0},
++                'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 0,
++                               'HIGH': 1}
++            }
+         self.check_example(filename, expect)
+ 
+     def test_exec_as_root(self):
+         '''Test for the `run_as_root=True` keyword argument.'''
+-        expect = {'SEVERITY': {'LOW': 5}, 'CONFIDENCE': {'MEDIUM': 5}}
++        expect = {
++            'SEVERITY': {'UNDEFINED': 0, 'LOW': 5, 'MEDIUM': 0, 'HIGH': 0},
++            'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 5, 'HIGH': 0}
++        }
+         self.check_example('exec-as-root.py', expect)
+ 
+     def test_hardcoded_passwords(self):
+         '''Test for hard-coded passwords.'''
+-        expect = {'SEVERITY': {'LOW': 7}, 'CONFIDENCE': {'MEDIUM': 7}}
++        expect = {
++            'SEVERITY': {'UNDEFINED': 0, 'LOW': 8, 'MEDIUM': 0, 'HIGH': 0},
++            'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 8, 'HIGH': 0}
++        }
+         self.check_example('hardcoded-passwords.py', expect)
+ 
+     def test_hardcoded_tmp(self):
+         '''Test for hard-coded /tmp, /var/tmp, /dev/shm.'''
+-        expect = {'SEVERITY': {'MEDIUM': 3}, 'CONFIDENCE': {'MEDIUM': 3}}
++        expect = {
++            'SEVERITY': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 3, 'HIGH': 0},
++            'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 3, 'HIGH': 0}
++        }
+         self.check_example('hardcoded-tmp.py', expect)
+ 
+     def test_httplib_https(self):
+         '''Test for `httplib.HTTPSConnection`.'''
+-        expect = {'SEVERITY': {'MEDIUM': 3}, 'CONFIDENCE': {'HIGH': 3}}
++        expect = {
++            'SEVERITY': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 3, 'HIGH': 0},
++            'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 0, 'HIGH': 3}
++        }
+         self.check_example('httplib_https.py', expect)
+ 
+     def test_imports_aliases(self):
+         '''Test the `import X as Y` syntax.'''
+         expect = {
+-            'SEVERITY': {'LOW': 4, 'MEDIUM': 5, 'HIGH': 0},
+-            'CONFIDENCE': {'HIGH': 9}
++            'SEVERITY': {'UNDEFINED': 0, 'LOW': 4, 'MEDIUM': 5, 'HIGH': 0},
++            'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 0, 'HIGH': 9}
+         }
+         self.check_example('imports-aliases.py', expect)
+ 
+     def test_imports_from(self):
+         '''Test the `from X import Y` syntax.'''
+-        expect = {'SEVERITY': {'LOW': 3}, 'CONFIDENCE': {'HIGH': 3}}
++        expect = {
++            'SEVERITY': {'UNDEFINED': 0, 'LOW': 3, 'MEDIUM': 0, 'HIGH': 0},
++            'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 0, 'HIGH': 3}
++        }
+         self.check_example('imports-from.py', expect)
+ 
+     def test_imports_function(self):
+         '''Test the `__import__` function.'''
+-        expect = {'SEVERITY': {'LOW': 2}, 'CONFIDENCE': {'HIGH': 2}}
++        expect = {
++            'SEVERITY': {'UNDEFINED': 0, 'LOW': 2, 'MEDIUM': 0, 'HIGH': 0},
++            'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 0, 'HIGH': 2}
++        }
+         self.check_example('imports-function.py', expect)
+ 
+     def test_telnet_usage(self):
+         '''Test for `import telnetlib` and Telnet.* calls.'''
+-        expect = {'SEVERITY': {'HIGH': 2}, 'CONFIDENCE': {'HIGH': 2}}
++        expect = {
++            'SEVERITY': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 0, 'HIGH': 2},
++            'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 0, 'HIGH': 2}
++        }
+         self.check_example('telnetlib.py', expect)
+ 
+     def test_ftp_usage(self):
+         '''Test for `import ftplib` and FTP.* calls.'''
+-        expect = {'SEVERITY': {'HIGH': 2}, 'CONFIDENCE': {'HIGH': 2}}
++        expect = {
++            'SEVERITY': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 0, 'HIGH': 2},
++            'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 0, 'HIGH': 2}
++        }
+         self.check_example('ftplib.py', expect)
+ 
+     def test_imports(self):
+         '''Test for dangerous imports.'''
+-        expect = {'SEVERITY': {'LOW': 2}, 'CONFIDENCE': {'HIGH': 2}}
++        expect = {
++            'SEVERITY': {'UNDEFINED': 0, 'LOW': 2, 'MEDIUM': 0, 'HIGH': 0},
++            'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 0, 'HIGH': 2}
++        }
+         self.check_example('imports.py', expect)
+ 
+     def test_mktemp(self):
+         '''Test for `tempfile.mktemp`.'''
+-        expect = {'SEVERITY': {'MEDIUM': 4}, 'CONFIDENCE': {'HIGH': 4}}
++        expect = {
++            'SEVERITY': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 4, 'HIGH': 0},
++            'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 0, 'HIGH': 4}
++        }
+         self.check_example('mktemp.py', expect)
+ 
+     def test_nonsense(self):
+@@ -214,7 +271,10 @@ class FunctionalTests(testtools.TestCase):
+ 
+     def test_okay(self):
+         '''Test a vulnerability-free file.'''
+-        expect = {'SEVERITY': {}, 'CONFIDENCE': {}}
++        expect = {
++            'SEVERITY': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 0, 'HIGH': 0},
++            'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 0, 'HIGH': 0}
++        }
+         self.check_example('okay.py', expect)
+ 
+     def test_os_chmod(self):
+@@ -225,75 +285,105 @@ class FunctionalTests(testtools.TestCase):
+         else:
+             filename = filename.format('py3')
+         expect = {
+-            'SEVERITY': {'MEDIUM': 2, 'HIGH': 8},
+-            'CONFIDENCE': {'MEDIUM': 1, 'HIGH': 9}
++            'SEVERITY': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 2, 'HIGH': 8},
++            'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 1, 'HIGH': 9}
+         }
+         self.check_example(filename, expect)
+ 
+     def test_os_exec(self):
+         '''Test for `os.exec*`.'''
+-        expect = {'SEVERITY': {'LOW': 8}, 'CONFIDENCE': {'MEDIUM': 8}}
++        expect = {
++            'SEVERITY': {'UNDEFINED': 0, 'LOW': 8, 'MEDIUM': 0, 'HIGH': 0},
++            'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 8, 'HIGH': 0}
++        }
+         self.check_example('os-exec.py', expect)
+ 
+     def test_os_popen(self):
+         '''Test for `os.popen`.'''
+-        expect = {'SEVERITY': {'LOW': 8, 'MEDIUM': 0, 'HIGH': 1},
+-                  'CONFIDENCE': {'HIGH': 9}}
++        expect = {
++            'SEVERITY': {'UNDEFINED': 0, 'LOW': 8, 'MEDIUM': 0, 'HIGH': 1},
++            'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 0, 'HIGH': 9}
++        }
+         self.check_example('os-popen.py', expect)
+ 
+     def test_os_spawn(self):
+         '''Test for `os.spawn*`.'''
+-        expect = {'SEVERITY': {'LOW': 8}, 'CONFIDENCE': {'MEDIUM': 8}}
++        expect = {
++            'SEVERITY': {'UNDEFINED': 0, 'LOW': 8, 'MEDIUM': 0, 'HIGH': 0},
++            'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 8, 'HIGH': 0}
++        }
+         self.check_example('os-spawn.py', expect)
+ 
+     def test_os_startfile(self):
+         '''Test for `os.startfile`.'''
+-        expect = {'SEVERITY': {'LOW': 3}, 'CONFIDENCE': {'MEDIUM': 3}}
++        expect = {
++            'SEVERITY': {'UNDEFINED': 0, 'LOW': 3, 'MEDIUM': 0, 'HIGH': 0},
++            'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 3, 'HIGH': 0}
++        }
+         self.check_example('os-startfile.py', expect)
+ 
+     def test_os_system(self):
+         '''Test for `os.system`.'''
+-        expect = {'SEVERITY': {'LOW': 1}, 'CONFIDENCE': {'HIGH': 1}}
++        expect = {
++            'SEVERITY': {'UNDEFINED': 0, 'LOW': 1, 'MEDIUM': 0, 'HIGH': 0},
++            'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 0, 'HIGH': 1}
++        }
+         self.check_example('os_system.py', expect)
+ 
+     def test_pickle(self):
+         '''Test for the `pickle` module.'''
+         expect = {
+-            'SEVERITY': {'LOW': 2, 'MEDIUM': 6},
+-            'CONFIDENCE': {'HIGH': 8}
++            'SEVERITY': {'UNDEFINED': 0, 'LOW': 2, 'MEDIUM': 6, 'HIGH': 0},
++            'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 0, 'HIGH': 8}
+         }
+         self.check_example('pickle_deserialize.py', expect)
+ 
+     def test_popen_wrappers(self):
+         '''Test the `popen2` and `commands` modules.'''
+-        expect = {'SEVERITY': {'LOW': 7}, 'CONFIDENCE': {'HIGH': 7}}
++        expect = {
++            'SEVERITY': {'UNDEFINED': 0, 'LOW': 7, 'MEDIUM': 0, 'HIGH': 0},
++            'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 0, 'HIGH': 7}
++        }
+         self.check_example('popen_wrappers.py', expect)
+ 
+     def test_random_module(self):
+         '''Test for the `random` module.'''
+-        expect = {'SEVERITY': {'LOW': 6}, 'CONFIDENCE': {'HIGH': 6}}
++        expect = {
++            'SEVERITY': {'UNDEFINED': 0, 'LOW': 6, 'MEDIUM': 0, 'HIGH': 0},
++            'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 0, 'HIGH': 6}
++        }
+         self.check_example('random_module.py', expect)
+ 
+     def test_requests_ssl_verify_disabled(self):
+         '''Test for the `requests` library skipping verification.'''
+-        expect = {'SEVERITY': {'HIGH': 7}, 'CONFIDENCE': {'HIGH': 7}}
++        expect = {
++            'SEVERITY': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 0, 'HIGH': 7},
++            'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 0, 'HIGH': 7}
++        }
+         self.check_example('requests-ssl-verify-disabled.py', expect)
+ 
+     def test_skip(self):
+         '''Test `#nosec` and `#noqa` comments.'''
+-        expect = {'SEVERITY': {'LOW': 5}, 'CONFIDENCE': {'HIGH': 5}}
++        expect = {
++            'SEVERITY': {'UNDEFINED': 0, 'LOW': 5, 'MEDIUM': 0, 'HIGH': 0},
++            'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 0, 'HIGH': 5}
++        }
+         self.check_example('skip.py', expect)
+ 
+     def test_ignore_skip(self):
+         '''Test --ignore-nosec flag.'''
+-        expect = {'SEVERITY': {'LOW': 7}, 'CONFIDENCE': {'HIGH': 7}}
++        expect = {
++            'SEVERITY': {'UNDEFINED': 0, 'LOW': 7, 'MEDIUM': 0, 'HIGH': 0},
++            'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 0, 'HIGH': 7}
++        }
+         self.check_example('skip.py', expect, ignore_nosec=True)
+ 
+     def test_sql_statements(self):
+         '''Test for SQL injection through string building.'''
+         expect = {
+-            'SEVERITY': {'MEDIUM': 14},
+-            'CONFIDENCE': {'LOW': 8, 'MEDIUM': 6}}
++            'SEVERITY': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 14, 'HIGH': 0},
++            'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 8, 'MEDIUM': 6, 'HIGH': 0}
++        }
+         self.check_example('sql_statements.py', expect)
+ 
+     def test_ssl_insecure_version(self):
+@@ -302,126 +392,164 @@ class FunctionalTests(testtools.TestCase):
+             'SEVERITY': {'LOW': 1, 'MEDIUM': 10, 'HIGH': 7},
+             'CONFIDENCE': {'LOW': 0, 'MEDIUM': 11, 'HIGH': 7}
+         }
++        expect = {
++            'SEVERITY': {'UNDEFINED': 0, 'LOW': 1, 'MEDIUM': 10, 'HIGH': 7},
++            'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 11, 'HIGH': 7}
++        }
+         self.check_example('ssl-insecure-version.py', expect)
+ 
+     def test_subprocess_shell(self):
+         '''Test for `subprocess.Popen` with `shell=True`.'''
+         expect = {
+-            'SEVERITY': {'HIGH': 3, 'MEDIUM': 1, 'LOW': 14},
+-            'CONFIDENCE': {'HIGH': 17, 'LOW': 1}
++            'SEVERITY': {'UNDEFINED': 0, 'LOW': 14, 'MEDIUM': 1, 'HIGH': 3},
++            'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 1, 'MEDIUM': 0, 'HIGH': 17}
+         }
+         self.check_example('subprocess_shell.py', expect)
+ 
+     def test_urlopen(self):
+         '''Test for dangerous URL opening.'''
+-        expect = {'SEVERITY': {'MEDIUM': 14}, 'CONFIDENCE': {'HIGH': 14}}
++        expect = {
++            'SEVERITY': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 14, 'HIGH': 0},
++            'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 0, 'HIGH': 14}
++        }
+         self.check_example('urlopen.py', expect)
+ 
+     def test_utils_shell(self):
+         '''Test for `utils.execute*` with `shell=True`.'''
+         expect = {
+-            'SEVERITY': {'LOW': 5},
+-            'CONFIDENCE': {'HIGH': 5}
++            'SEVERITY': {'UNDEFINED': 0, 'LOW': 5, 'MEDIUM': 0, 'HIGH': 0},
++            'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 0, 'HIGH': 5}
+         }
+         self.check_example('utils-shell.py', expect)
+ 
+     def test_wildcard_injection(self):
+         '''Test for wildcard injection in shell commands.'''
+         expect = {
+-            'SEVERITY': {'HIGH': 4, 'MEDIUM': 0, 'LOW': 10},
+-            'CONFIDENCE': {'MEDIUM': 5, 'HIGH': 9}
++            'SEVERITY': {'UNDEFINED': 0, 'LOW': 10, 'MEDIUM': 0, 'HIGH': 4},
++            'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 5, 'HIGH': 9}
+         }
+         self.check_example('wildcard-injection.py', expect)
+ 
+     def test_yaml(self):
+         '''Test for `yaml.load`.'''
+-        expect = {'SEVERITY': {'MEDIUM': 1}, 'CONFIDENCE': {'HIGH': 1}}
++        expect = {
++            'SEVERITY': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 1, 'HIGH': 0},
++            'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 0, 'HIGH': 1}
++        }
+         self.check_example('yaml_load.py', expect)
+ 
+     def test_jinja2_templating(self):
+         '''Test jinja templating for potential XSS bugs.'''
+         expect = {
+-            'SEVERITY': {'HIGH': 4},
+-            'CONFIDENCE': {'HIGH': 3, 'MEDIUM': 1}
++            'SEVERITY': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 0, 'HIGH': 4},
++            'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 1, 'HIGH': 3}
+         }
+         self.check_example('jinja2_templating.py', expect)
+ 
+     def test_secret_config_option(self):
+         '''Test for `secret=True` in Oslo's config.'''
+         expect = {
+-            'SEVERITY': {'LOW': 1, 'MEDIUM': 2},
+-            'CONFIDENCE': {'MEDIUM': 3}
++            'SEVERITY': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 3, 'HIGH': 0},
++            'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 1, 'MEDIUM': 2, 'HIGH': 0}
+         }
+         self.check_example('secret-config-option.py', expect)
+ 
+     def test_mako_templating(self):
+         '''Test Mako templates for XSS.'''
+-        expect = {'SEVERITY': {'MEDIUM': 3}, 'CONFIDENCE': {'HIGH': 3}}
++        expect = {
++            'SEVERITY': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 3, 'HIGH': 0},
++            'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 0, 'HIGH': 3}
++        }
+         self.check_example('mako_templating.py', expect)
+ 
+     def test_xml(self):
+         '''Test xml vulnerabilities.'''
+-        expect = {'SEVERITY': {'LOW': 1, 'HIGH': 4},
+-                  'CONFIDENCE': {'HIGH': 1, 'MEDIUM': 4}}
++        expect = {
++            'SEVERITY': {'UNDEFINED': 0, 'LOW': 1, 'MEDIUM': 4, 'HIGH': 0},
++            'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 0, 'HIGH': 5}
++        }
+         self.check_example('xml_etree_celementtree.py', expect)
+ 
+-        expect = {'SEVERITY': {'LOW': 1, 'HIGH': 2},
+-                  'CONFIDENCE': {'HIGH': 1, 'MEDIUM': 2}}
++        expect = {
++            'SEVERITY': {'UNDEFINED': 0, 'LOW': 1, 'MEDIUM': 2, 'HIGH': 0},
++            'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 0, 'HIGH': 3}
++        }
+         self.check_example('xml_expatbuilder.py', expect)
+ 
+-        expect = {'SEVERITY': {'LOW': 3, 'HIGH': 1},
+-                  'CONFIDENCE': {'HIGH': 3, 'MEDIUM': 1}}
++        expect = {
++            'SEVERITY': {'UNDEFINED': 0, 'LOW': 3, 'MEDIUM': 1, 'HIGH': 0},
++            'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 0, 'HIGH': 4}
++        }
+         self.check_example('xml_lxml.py', expect)
+ 
+-        expect = {'SEVERITY': {'LOW': 2, 'HIGH': 2},
+-                  'CONFIDENCE': {'HIGH': 2, 'MEDIUM': 2}}
++        expect = {
++            'SEVERITY': {'UNDEFINED': 0, 'LOW': 2, 'MEDIUM': 2, 'HIGH': 0},
++            'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 0, 'HIGH': 4}
++        }
+         self.check_example('xml_pulldom.py', expect)
+ 
+-        expect = {'SEVERITY': {'HIGH': 1},
+-                  'CONFIDENCE': {'HIGH': 1}}
++        expect = {
++            'SEVERITY': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 0, 'HIGH': 1},
++            'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 0, 'HIGH': 1}
++        }
+         self.check_example('xml_xmlrpc.py', expect)
+ 
+-        expect = {'SEVERITY': {'LOW': 1, 'HIGH': 4},
+-                  'CONFIDENCE': {'HIGH': 1, 'MEDIUM': 4}}
++        expect = {
++            'SEVERITY': {'UNDEFINED': 0, 'LOW': 1, 'MEDIUM': 4, 'HIGH': 0},
++            'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 0, 'HIGH': 5}
++        }
+         self.check_example('xml_etree_elementtree.py', expect)
+ 
+-        expect = {'SEVERITY': {'LOW': 1, 'HIGH': 1},
+-                  'CONFIDENCE': {'HIGH': 1, 'MEDIUM': 1}}
++        expect = {
++            'SEVERITY': {'UNDEFINED': 0, 'LOW': 1, 'MEDIUM': 1, 'HIGH': 0},
++            'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 0, 'HIGH': 2}
++        }
+         self.check_example('xml_expatreader.py', expect)
+ 
+-        expect = {'SEVERITY': {'LOW': 2, 'HIGH': 2},
+-                  'CONFIDENCE': {'HIGH': 2, 'MEDIUM': 2}}
++        expect = {
++            'SEVERITY': {'UNDEFINED': 0, 'LOW': 2, 'MEDIUM': 2, 'HIGH': 0},
++            'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 0, 'HIGH': 4}
++        }
+         self.check_example('xml_minidom.py', expect)
+ 
+-        expect = {'SEVERITY': {'LOW': 2, 'HIGH': 6},
+-                  'CONFIDENCE': {'HIGH': 2, 'MEDIUM': 6}}
++        expect = {
++            'SEVERITY': {'UNDEFINED': 0, 'LOW': 2, 'MEDIUM': 6, 'HIGH': 0},
++            'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 0, 'HIGH': 8}
++        }
+         self.check_example('xml_sax.py', expect)
+ 
+     def test_httpoxy(self):
+         '''Test httpoxy vulnerability.'''
+-        expect = {'SEVERITY': {'HIGH': 1},
+-                  'CONFIDENCE': {'HIGH': 1}}
++        expect = {
++            'SEVERITY': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 0, 'HIGH': 1},
++            'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 0, 'HIGH': 1}
++        }
+         self.check_example('httpoxy_cgihandler.py', expect)
+         self.check_example('httpoxy_twisted_script.py', expect)
+         self.check_example('httpoxy_twisted_directory.py', expect)
+ 
+     def test_asserts(self):
+         '''Test catching the use of assert.'''
+-        expect = {'SEVERITY': {'LOW': 1},
+-                  'CONFIDENCE': {'HIGH': 1}}
++        expect = {
++            'SEVERITY': {'UNDEFINED': 0, 'LOW': 1, 'MEDIUM': 0, 'HIGH': 0},
++            'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 0, 'HIGH': 1}
++        }
+         self.check_example('assert.py', expect)
+ 
+     def test_paramiko_injection(self):
+         '''Test paramiko command execution.'''
+-        expect = {'SEVERITY': {'MEDIUM': 2},
+-                  'CONFIDENCE': {'MEDIUM': 2}}
++        expect = {
++            'SEVERITY': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 2, 'HIGH': 0},
++            'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 2, 'HIGH': 0}
++        }
+         self.check_example('paramiko_injection.py', expect)
+ 
+     def test_partial_path(self):
+         '''Test process spawning with partial file paths.'''
+-        expect = {'SEVERITY': {'LOW': 11},
+-                  'CONFIDENCE': {'HIGH': 11}}
+-
++        expect = {
++            'SEVERITY': {'UNDEFINED': 0, 'LOW': 11, 'MEDIUM': 0, 'HIGH': 0},
++            'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 0, 'HIGH': 11}
++        }
+         self.check_example('partial_path_process.py', expect)
+ 
+     def test_try_except_continue(self):
+@@ -430,11 +558,17 @@ class FunctionalTests(testtools.TestCase):
+                     if x.__name__ == 'try_except_continue'))
+ 
+         test._config = {'check_typed_exception': True}
+-        expect = {'SEVERITY': {'LOW': 3}, 'CONFIDENCE': {'HIGH': 3}}
++        expect = {
++            'SEVERITY': {'UNDEFINED': 0, 'LOW': 3, 'MEDIUM': 0, 'HIGH': 0},
++            'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 0, 'HIGH': 3}
++        }
+         self.check_example('try_except_continue.py', expect)
+ 
+         test._config = {'check_typed_exception': False}
+-        expect = {'SEVERITY': {'LOW': 2}, 'CONFIDENCE': {'HIGH': 2}}
++        expect = {
++            'SEVERITY': {'UNDEFINED': 0, 'LOW': 2, 'MEDIUM': 0, 'HIGH': 0},
++            'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 0, 'HIGH': 2}
++        }
+         self.check_example('try_except_continue.py', expect)
+ 
+     def test_try_except_pass(self):
+@@ -443,11 +577,17 @@ class FunctionalTests(testtools.TestCase):
+                      if x.__name__ == 'try_except_pass'))
+ 
+         test._config = {'check_typed_exception': True}
+-        expect = {'SEVERITY': {'LOW': 3}, 'CONFIDENCE': {'HIGH': 3}}
++        expect = {
++            'SEVERITY': {'UNDEFINED': 0, 'LOW': 3, 'MEDIUM': 0, 'HIGH': 0},
++            'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 0, 'HIGH': 3}
++        }
+         self.check_example('try_except_pass.py', expect)
+ 
+         test._config = {'check_typed_exception': False}
+-        expect = {'SEVERITY': {'LOW': 2}, 'CONFIDENCE': {'HIGH': 2}}
++        expect = {
++            'SEVERITY': {'UNDEFINED': 0, 'LOW': 2, 'MEDIUM': 0, 'HIGH': 0},
++            'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 0, 'HIGH': 2}
++        }
+         self.check_example('try_except_pass.py', expect)
+ 
+     def test_metric_gathering(self):
+@@ -465,8 +605,8 @@ class FunctionalTests(testtools.TestCase):
+     def test_weak_cryptographic_key(self):
+         '''Test for weak key sizes.'''
+         expect = {
+-            'SEVERITY': {'MEDIUM': 8, 'HIGH': 6},
+-            'CONFIDENCE': {'HIGH': 14}
++            'SEVERITY': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 8, 'HIGH': 6},
++            'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 0, 'HIGH': 14}
+         }
+         self.check_example('weak_cryptographic_key_sizes.py', expect)
+ 
+@@ -503,15 +643,15 @@ class FunctionalTests(testtools.TestCase):
+ 
+     def test_flask_debug_true(self):
+         expect = {
+-            'SEVERITY': {'HIGH': 1},
+-            'CONFIDENCE': {'MEDIUM': 1}
++            'SEVERITY': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 0, 'HIGH': 1},
++            'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 1, 'HIGH': 0}
+         }
+         self.check_example('flask_debug.py', expect)
+ 
+     def test_nosec(self):
+         expect = {
+-            'SEVERITY': {},
+-            'CONFIDENCE': {}
++            'SEVERITY': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 0, 'HIGH': 0},
++            'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 0, 'HIGH': 0}
+         }
+         self.check_example('nosec.py', expect)
+ 
+@@ -545,7 +685,7 @@ class FunctionalTests(testtools.TestCase):
+ 
+     def test_blacklist_input(self):
+         expect = {
+-            'SEVERITY': {'HIGH': 1},
+-            'CONFIDENCE': {'HIGH': 1}
++            'SEVERITY': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 0, 'HIGH': 1},
++            'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 0, 'HIGH': 1}
+         }
+         self.check_example('input.py', expect)
+-- 
+2.13.6
+
+From 35e35446b00bceea5bebf028567e4f99bd29dc98 Mon Sep 17 00:00:00 2001
+From: Eric Brown <browne@vmware.com>
+Date: Thu, 23 Feb 2017 11:05:04 -0800
+Subject: [PATCH 11/43] Add sha-1 to list of insecure hashes
+
+With the news of a first collison implemented [1], bandit should
+now start blacklisting the use of sha-1.
+
+The sha-1 hash was added to the existing blacklist check B303 which
+currently checks for MD5 and variants.
+
+[1]: https://security.googleblog.com/2017/02/announcing-first-sha1-collision.html
+
+Change-Id: I411d8d4aeb4d740635c60b559ecda72ab951b629
+---
+ bandit/blacklists/calls.py          | 15 ++++++++++++---
+ examples/crypto-md5.py              |  7 +++++++
+ tests/functional/test_functional.py |  8 ++++----
+ 3 files changed, 23 insertions(+), 7 deletions(-)
+
+diff --git a/bandit/blacklists/calls.py b/bandit/blacklists/calls.py
+index 01f2ce5..78b029c 100644
+--- a/bandit/blacklists/calls.py
++++ b/bandit/blacklists/calls.py
+@@ -55,20 +55,25 @@ Deserialization with the marshal module is possibly dangerous.
+ B303: md5
+ ---------
+ 
+-Use of insecure MD2, MD4, or MD5 hash function.
++Use of insecure MD2, MD4, MD5, or SHA1 hash function.
+ 
+ +------+---------------------+------------------------------------+-----------+
+ | ID   |  Name               |  Calls                             |  Severity |
+ +======+=====================+====================================+===========+
+ | B303 | md5                 | - hashlib.md5                      | Medium    |
++|      |                     | - hashlib.sha1                     |           |
+ |      |                     | - Crypto.Hash.MD2.new              |           |
+ |      |                     | - Crypto.Hash.MD4.new              |           |
+ |      |                     | - Crypto.Hash.MD5.new              |           |
++|      |                     | - Crypto.Hash.SHA.new              |           |
+ |      |                     | - Cryptodome.Hash.MD2.new          |           |
+ |      |                     | - Cryptodome.Hash.MD4.new          |           |
+ |      |                     | - Cryptodome.Hash.MD5.new          |           |
++|      |                     | - Cryptodome.Hash.SHA.new          |           |
+ |      |                     | - cryptography.hazmat.primitives   |           |
+ |      |                     |   .hashes.MD5                      |           |
++|      |                     | - cryptography.hazmat.primitives   |           |
++|      |                     |   .hashes.SHA1                     |           |
+ +------+---------------------+------------------------------------+-----------+
+ 
+ B304 - B305: ciphers and modes
+@@ -318,14 +323,18 @@ def gen_blacklist():
+     sets.append(utils.build_conf_dict(
+         'md5', 'B303',
+         ['hashlib.md5',
++         'hashlib.sha1',
+          'Crypto.Hash.MD2.new',
+          'Crypto.Hash.MD4.new',
+          'Crypto.Hash.MD5.new',
++         'Crypto.Hash.SHA.new',
+          'Cryptodome.Hash.MD2.new',
+          'Cryptodome.Hash.MD4.new',
+          'Cryptodome.Hash.MD5.new',
+-         'cryptography.hazmat.primitives.hashes.MD5'],
+-        'Use of insecure MD2, MD4, or MD5 hash function.'
++         'Cryptodome.Hash.SHA.new',
++         'cryptography.hazmat.primitives.hashes.MD5',
++         'cryptography.hazmat.primitives.hashes.SHA1'],
++        'Use of insecure MD2, MD4, MD5, or SHA1 hash function.'
+         ))
+ 
+     sets.append(utils.build_conf_dict(
+diff --git a/examples/crypto-md5.py b/examples/crypto-md5.py
+index d5b85c2..045740c 100644
+--- a/examples/crypto-md5.py
++++ b/examples/crypto-md5.py
+@@ -2,9 +2,11 @@ from cryptography.hazmat.primitives import hashes
+ from Crypto.Hash import MD2 as pycrypto_md2
+ from Crypto.Hash import MD4 as pycrypto_md4
+ from Crypto.Hash import MD5 as pycrypto_md5
++from Crypto.Hash import SHA as pycrypto_sha
+ from Cryptodome.Hash import MD2 as pycryptodomex_md2
+ from Cryptodome.Hash import MD4 as pycryptodomex_md4
+ from Cryptodome.Hash import MD5 as pycryptodomex_md5
++from Cryptodome.Hash import SHA as pycryptodomex_sha
+ import hashlib
+ 
+ hashlib.md5(1)
+@@ -14,12 +16,17 @@ abc = str.replace(hashlib.md5("1"), "###")
+ 
+ print(hashlib.md5("1"))
+ 
++hashlib.sha1(1)
++
+ pycrypto_md2.new()
+ pycrypto_md4.new()
+ pycrypto_md5.new()
++pycrypto_sha.new()
+ 
+ pycryptodomex_md2.new()
+ pycryptodomex_md4.new()
+ pycryptodomex_md5.new()
++pycryptodomex_sha.new()
+ 
+ hashes.MD5()
++hashes.SHA1()
+diff --git a/tests/functional/test_functional.py b/tests/functional/test_functional.py
+index 5667001..e94c3bf 100644
+--- a/tests/functional/test_functional.py
++++ b/tests/functional/test_functional.py
+@@ -120,16 +120,16 @@ class FunctionalTests(testtools.TestCase):
+     def test_crypto_md5(self):
+         '''Test the `hashlib.md5` example.'''
+         expect = {
+-            'SEVERITY': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 11, 'HIGH': 0},
+-            'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 0, 'HIGH': 11}
++            'SEVERITY': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 15, 'HIGH': 0},
++            'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 0, 'HIGH': 15}
+         }
+         self.check_example('crypto-md5.py', expect)
+ 
+     def test_ciphers(self):
+         '''Test the `Crypto.Cipher` example.'''
+         expect = {
+-            'SEVERITY': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 0, 'HIGH': 13},
+-            'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 0, 'HIGH': 13}
++            'SEVERITY': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 1, 'HIGH': 13},
++            'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 0, 'HIGH': 14}
+         }
+         self.check_example('ciphers.py', expect)
+ 
+-- 
+2.13.6
+
+From 6a1a4b120d005cee2ed0c8be723dd367b549b3f0 Mon Sep 17 00:00:00 2001
+From: Eric Brown <browne@vmware.com>
+Date: Mon, 27 Feb 2017 15:48:44 -0800
+Subject: [PATCH 12/43] Docs for B319 listed twice
+
+The blacklist calls doc lists B319 twice. This patch removes the
+duplicate.
+
+[1]: https://docs.openstack.org/developer/bandit/blacklists/blacklist_calls.html#b313-b320-xml
+
+Change-Id: I94ca7cb1201f6d74ce8672294d2ba421ea5a608c
+---
+ bandit/blacklists/calls.py | 3 ---
+ 1 file changed, 3 deletions(-)
+
+diff --git a/bandit/blacklists/calls.py b/bandit/blacklists/calls.py
+index 01f2ce5..9928f59 100644
+--- a/bandit/blacklists/calls.py
++++ b/bandit/blacklists/calls.py
+@@ -244,9 +244,6 @@ to XML attacks. Methods should be replaced with their defusedxml equivalents.
+ | B319 | xml_bad_pulldom     | - xml.dom.pulldom.parse            | Medium    |
+ |      |                     | - xml.dom.pulldom.parseString      |           |
+ +------+---------------------+------------------------------------+-----------+
+-| B319 | xml_bad_pulldom     | - xml.dom.pulldom.parse            | Medium    |
+-|      |                     | - xml.dom.pulldom.parseString      |           |
+-+------+---------------------+------------------------------------+-----------+
+ | B320 | xml_bad_etree       | - lxml.etree.parse                 | Medium    |
+ |      |                     | - lxml.etree.fromstring            |           |
+ |      |                     | - lxml.etree.RestrictedElement     |           |
+-- 
+2.13.6
+
+From be0483a603407ba8f8110da415161cee26f142b8 Mon Sep 17 00:00:00 2001
+From: Eric Brown <browne@vmware.com>
+Date: Mon, 27 Feb 2017 15:44:02 -0800
+Subject: [PATCH 13/43] Repair the more info links for two blacklist calls
+
+The blacklist calls has some of documentation anchors combined [1].
+As a result, the links don't correct point to the proper anchor in
+the html. Therefore we need some exception cases for checks that
+have doc combined. Namely B304-B305 and B313-B320.
+
+This patch also fixes links where there is an underscore in the
+plugin name and replaces it with a dash. Apparently sphinx will
+substitute _ for - when building the doc anchors.
+
+[1]: https://docs.openstack.org/developer/bandit/blacklists/blacklist_calls.html#b304-b305-ciphers-and-modes
+
+Change-Id: I4dfa905425f2631fa488a9a066c427d4145f4aac
+---
+ bandit/core/docs_utils.py | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/bandit/core/docs_utils.py b/bandit/core/docs_utils.py
+index 6c2a640..8f268e0 100644
+--- a/bandit/core/docs_utils.py
++++ b/bandit/core/docs_utils.py
+@@ -31,7 +31,16 @@ def get_url(bid):
+     info = extension_loader.MANAGER.blacklist_by_id.get(bid, None)
+     if info is not None:
+         template = 'blacklists/blacklist_{kind}.html#{id}-{name}'
++        info['name'] = info['name'].replace('_', '-')
++
+         if info['id'].startswith('B3'):  # B3XX
++            # Some of the links are combined, so we have exception cases
++            if info['id'] in ['B304', 'B305']:
++                info['id'] = 'b304-b305'
++                info['name'] = 'ciphers-and-modes'
++            elif info['id'] in ['B313', 'B314', 'B315', 'B316', 'B317',
++                                'B318', 'B319', 'B320']:
++                info['id'] = 'b313-b320'
+             ext = template.format(
+                 kind='calls', id=info['id'], name=info['name'])
+         else:
+-- 
+2.13.6
+
+From fbd4e83efe15987f4f8a4608456211fba37fc80b Mon Sep 17 00:00:00 2001
+From: Eric Brown <browne@vmware.com>
+Date: Wed, 22 Feb 2017 20:28:19 -0800
+Subject: [PATCH 14/43] Yet Another Formatter (yaml)
+
+This patch adds a yaml formatter to the output options of bandit.
+
+Change-Id: Ibbe0cff062ce2c11138b746f95109f31de10f5b1
+---
+ README.rst                         |  6 +--
+ bandit/formatters/yaml.py          | 92 ++++++++++++++++++++++++++++++++++++
+ doc/source/formatters/yaml.rst     |  5 ++
+ doc/source/man/bandit.rst          |  6 +--
+ setup.cfg                          |  1 +
+ tests/unit/formatters/test_yaml.py | 96 ++++++++++++++++++++++++++++++++++++++
+ 6 files changed, 200 insertions(+), 6 deletions(-)
+ create mode 100644 bandit/formatters/yaml.py
+ create mode 100644 doc/source/formatters/yaml.rst
+ create mode 100644 tests/unit/formatters/test_yaml.py
+
+diff --git a/README.rst b/README.rst
+index 61a5e7b..b7f4ba9 100644
+--- a/README.rst
++++ b/README.rst
+@@ -87,8 +87,8 @@ Usage::
+     $ bandit -h
+     usage: bandit [-h] [-r] [-a {file,vuln}] [-n CONTEXT_LINES] [-c CONFIG_FILE]
+                   [-p PROFILE] [-t TESTS] [-s SKIPS] [-l] [-i]
+-                  [-f {csv,html,json,screen,txt,xml}] [-o [OUTPUT_FILE]] [-v] [-d]
+-                  [--ignore-nosec] [-x EXCLUDED_PATHS] [-b BASELINE]
++                  [-f {csv,html,json,screen,txt,xml,yaml}] [-o [OUTPUT_FILE]] [-v]
++                  [-d] [--ignore-nosec] [-x EXCLUDED_PATHS] [-b BASELINE]
+                   [--ini INI_PATH] [--version]
+                   targets [targets ...]
+ 
+@@ -118,7 +118,7 @@ Usage::
+                             (-l for LOW, -ll for MEDIUM, -lll for HIGH)
+       -i, --confidence      report only issues of a given confidence level or
+                             higher (-i for LOW, -ii for MEDIUM, -iii for HIGH)
+-      -f {csv,html,json,screen,txt,xml}, --format {csv,html,json,screen,txt,xml}
++      -f {csv,html,json,screen,txt,xml,yaml}, --format {csv,html,json,screen,txt,xml,yaml}
+                             specify output format
+       -o [OUTPUT_FILE], --output [OUTPUT_FILE]
+                             write report to filename
+diff --git a/bandit/formatters/yaml.py b/bandit/formatters/yaml.py
+new file mode 100644
+index 0000000..69aeedb
+--- /dev/null
++++ b/bandit/formatters/yaml.py
+@@ -0,0 +1,92 @@
++# Copyright (c) 2017 VMware, Inc.
++#
++#  Licensed under the Apache License, Version 2.0 (the "License"); you may
++#  not use this file except in compliance with the License. You may obtain
++#  a copy of the License at
++#
++#       http://www.apache.org/licenses/LICENSE-2.0
++#
++#  Unless required by applicable law or agreed to in writing, software
++#  distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
++#  WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
++#  License for the specific language governing permissions and limitations
++#  under the License.
++
++r"""
++==============
++YAML Formatter
++==============
++
++This formatter outputs the issues in a yaml format.
++
++:Example:
++
++.. code-block:: none
++
++    filename,test_name,test_id,issue_severity,issue_confidence,issue_text,
++    line_number,line_range
++    examples/yaml_load.py,blacklist_calls,B301,MEDIUM,HIGH,"Use of unsafe yaml
++    load. Allows instantiation of arbitrary objects. Consider yaml.safe_load().
++    ",5,[5]
++
++.. versionadded:: 1.4.1
++
++"""
++# Necessary for this formatter to work when imported on Python 2. Importing
++# the standard library's yaml module conflicts with the name of this module.
++from __future__ import absolute_import
++
++import datetime
++import logging
++import operator
++import sys
++
++import yaml
++
++LOG = logging.getLogger(__name__)
++
++
++def report(manager, fileobj, sev_level, conf_level, lines=-1):
++    '''Prints issues in YAML format
++
++    :param manager: the bandit manager object
++    :param fileobj: The output file object, which may be sys.stdout
++    :param sev_level: Filtering severity level
++    :param conf_level: Filtering confidence level
++    :param lines: Number of lines to report, -1 for all
++    '''
++
++    machine_output = {'results': [], 'errors': []}
++    for (fname, reason) in manager.get_skipped():
++        machine_output['errors'].append({'filename': fname, 'reason': reason})
++
++    results = manager.get_issue_list(sev_level=sev_level,
++                                     conf_level=conf_level)
++
++    collector = [r.as_dict() for r in results]
++
++    itemgetter = operator.itemgetter
++    if manager.agg_type == 'vuln':
++        machine_output['results'] = sorted(collector,
++                                           key=itemgetter('test_name'))
++    else:
++        machine_output['results'] = sorted(collector,
++                                           key=itemgetter('filename'))
++
++    machine_output['metrics'] = manager.metrics.data
++
++    for result in machine_output['results']:
++        if 'code' in result:
++            code = result['code'].replace('\n', '\\n')
++            result['code'] = code
++
++    # timezone agnostic format
++    TS_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
++
++    time_string = datetime.datetime.utcnow().strftime(TS_FORMAT)
++    machine_output['generated_at'] = time_string
++
++    yaml.safe_dump(machine_output, fileobj, default_flow_style=False)
++
++    if fileobj.name != sys.stdout.name:
++        LOG.info("YAML output written to file: %s", fileobj.name)
+diff --git a/doc/source/formatters/yaml.rst b/doc/source/formatters/yaml.rst
+new file mode 100644
+index 0000000..020feae
+--- /dev/null
++++ b/doc/source/formatters/yaml.rst
+@@ -0,0 +1,5 @@
++----
++yaml
++----
++
++.. automodule:: bandit.formatters.yaml
+diff --git a/doc/source/man/bandit.rst b/doc/source/man/bandit.rst
+index be0b993..04a3a43 100644
+--- a/doc/source/man/bandit.rst
++++ b/doc/source/man/bandit.rst
+@@ -7,8 +7,8 @@ SYNOPSIS
+ 
+ bandit [-h] [-r] [-a {file,vuln}] [-n CONTEXT_LINES] [-c CONFIG_FILE]
+             [-p PROFILE] [-t TESTS] [-s SKIPS] [-l] [-i]
+-            [-f {csv,html,json,screen,txt,xml}] [-o OUTPUT_FILE] [-v] [-d]
+-            [--ignore-nosec] [-x EXCLUDED_PATHS] [-b BASELINE]
++            [-f {csv,html,json,screen,txt,xml,yaml}] [-o OUTPUT_FILE] [-v]
++            [-d] [--ignore-nosec] [-x EXCLUDED_PATHS] [-b BASELINE]
+             [--ini INI_PATH] [--version]
+             targets [targets ...]
+ 
+@@ -43,7 +43,7 @@ OPTIONS
+                         (-l for LOW, -ll for MEDIUM, -lll for HIGH)
+   -i, --confidence      report only issues of a given confidence level or
+                         higher (-i for LOW, -ii for MEDIUM, -iii for HIGH)
+-  -f {csv,html,json,screen,txt,xml}, --format {csv,html,json,screen,txt,xml}
++  -f {csv,html,json,screen,txt,xml,yaml}, --format {csv,html,json,screen,txt,xml,yaml}
+                         specify output format
+   -o OUTPUT_FILE, --output OUTPUT_FILE
+                         write report to filename
+diff --git a/setup.cfg b/setup.cfg
+index ac21b7e..cb3aad6 100644
+--- a/setup.cfg
++++ b/setup.cfg
+@@ -36,6 +36,7 @@ bandit.formatters =
+     xml = bandit.formatters.xml:report
+     html = bandit.formatters.html:report
+     screen = bandit.formatters.screen:report
++    yaml = bandit.formatters.yaml:report
+ bandit.plugins =
+     # bandit/plugins/app_debug.py
+     flask_debug_true = bandit.plugins.app_debug:flask_debug_true
+diff --git a/tests/unit/formatters/test_yaml.py b/tests/unit/formatters/test_yaml.py
+new file mode 100644
+index 0000000..348066d
+--- /dev/null
++++ b/tests/unit/formatters/test_yaml.py
+@@ -0,0 +1,96 @@
++# Copyright (c) 2017 VMware, Inc.
++#
++#  Licensed under the Apache License, Version 2.0 (the "License"); you may
++#  not use this file except in compliance with the License. You may obtain
++#  a copy of the License at
++#
++#       http://www.apache.org/licenses/LICENSE-2.0
++#
++#  Unless required by applicable law or agreed to in writing, software
++#  distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
++#  WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
++#  License for the specific language governing permissions and limitations
++#  under the License.
++
++import collections
++import tempfile
++
++import mock
++import testtools
++import yaml
++
++import bandit
++from bandit.core import config
++from bandit.core import constants
++from bandit.core import issue
++from bandit.core import manager
++from bandit.core import metrics
++from bandit.formatters import json as b_json
++
++
++class JsonFormatterTests(testtools.TestCase):
++
++    def setUp(self):
++        super(JsonFormatterTests, self).setUp()
++        conf = config.BanditConfig()
++        self.manager = manager.BanditManager(conf, 'file')
++        (tmp_fd, self.tmp_fname) = tempfile.mkstemp()
++        self.context = {'filename': self.tmp_fname,
++                        'lineno': 4,
++                        'linerange': [4]}
++        self.check_name = 'hardcoded_bind_all_interfaces'
++        self.issue = issue.Issue(bandit.MEDIUM, bandit.MEDIUM,
++                                 'Possible binding to all interfaces.')
++
++        self.candidates = [issue.Issue(bandit.LOW, bandit.LOW, 'Candidate A',
++                                       lineno=1),
++                           issue.Issue(bandit.HIGH, bandit.HIGH, 'Candiate B',
++                                       lineno=2)]
++
++        self.manager.out_file = self.tmp_fname
++
++        self.issue.fname = self.context['filename']
++        self.issue.lineno = self.context['lineno']
++        self.issue.linerange = self.context['linerange']
++        self.issue.test = self.check_name
++
++        self.manager.results.append(self.issue)
++        self.manager.metrics = metrics.Metrics()
++
++        # mock up the metrics
++        for key in ['_totals', 'binding.py']:
++            self.manager.metrics.data[key] = {'loc': 4, 'nosec': 2}
++            for (criteria, default) in constants.CRITERIA:
++                for rank in constants.RANKING:
++                    self.manager.metrics.data[key]['{0}.{1}'.format(
++                        criteria, rank
++                    )] = 0
++
++    @mock.patch('bandit.core.manager.BanditManager.get_issue_list')
++    def test_report(self, get_issue_list):
++        self.manager.files_list = ['binding.py']
++        self.manager.scores = [{'SEVERITY': [0] * len(constants.RANKING),
++                                'CONFIDENCE': [0] * len(constants.RANKING)}]
++
++        get_issue_list.return_value = collections.OrderedDict(
++            [(self.issue, self.candidates)])
++
++        tmp_file = open(self.tmp_fname, 'w')
++        b_json.report(self.manager, tmp_file, self.issue.severity,
++                      self.issue.confidence)
++
++        with open(self.tmp_fname) as f:
++            data = yaml.load(f.read())
++            self.assertIsNotNone(data['generated_at'])
++            self.assertEqual(self.tmp_fname, data['results'][0]['filename'])
++            self.assertEqual(self.issue.severity,
++                             data['results'][0]['issue_severity'])
++            self.assertEqual(self.issue.confidence,
++                             data['results'][0]['issue_confidence'])
++            self.assertEqual(self.issue.text, data['results'][0]['issue_text'])
++            self.assertEqual(self.context['lineno'],
++                             data['results'][0]['line_number'])
++            self.assertEqual(self.context['linerange'],
++                             data['results'][0]['line_range'])
++            self.assertEqual(self.check_name, data['results'][0]['test_name'])
++            self.assertIn('candidates', data['results'][0])
+-- 
+2.13.6
+

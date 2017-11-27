@@ -4,7 +4,7 @@
 
 Name: bandit
 Version: 1.4.0
-Release: 2%{?dist}
+Release: 3%{?dist}
 Summary: A framework for performing security analysis of Python source code
 License: ASL 2.0
 URL: https://wiki.openstack.org/wiki/Security/Projects/Bandit
@@ -21,6 +21,7 @@ BuildRequires: python3-pip
 BuildRequires: python3-pbr
 
 Patch0: bandit-1.4.0-2-setup.cfg.patch
+Patch1: bandit-1.4.0-3-formatter-yaml.patch
 
 %description
 Bandit provides a framework for performing security analysis of Python source
@@ -56,6 +57,9 @@ tox -epy27
 %{python3_sitelib}/%{name}-%{version}-py%{python3_version}.egg-info
 
 %changelog
+* Mon Nov 27 2017 Marek Cermak <macermak@redhat.com> - 1.4.0-3
+- new formatter (yaml)
+
 * Mon Nov 27 2017 Marek Cermak <macermak@redhat.com> - 1.4.0-2
 - reformat setup.cfg
 
