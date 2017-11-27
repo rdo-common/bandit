@@ -4,7 +4,7 @@
 
 Name: bandit
 Version: 1.4.0
-Release: 1%{?dist}
+Release: 2%{?dist}
 Summary: A framework for performing security analysis of Python source code
 License: ASL 2.0
 URL: https://wiki.openstack.org/wiki/Security/Projects/Bandit
@@ -20,6 +20,8 @@ BuildRequires: python3-pip
 %endif
 BuildRequires: python3-pbr
 
+Patch0: bandit-1.4.0-2-setup.cfg.patch
+
 %description
 Bandit provides a framework for performing security analysis of Python source
 code, utilizing the ast module from the Python standard library.
@@ -29,7 +31,7 @@ syntax nodes. Bandit allows users to define custom tests that are performed
 against those nodes. At the completion of testing, a report is generated
 that lists security issues identified within the target source code.
 %prep
-%setup -q
+%autosetup -p1
 
 %build
 %{__python3} setup.py build
@@ -54,6 +56,9 @@ tox -epy27
 %{python3_sitelib}/%{name}-%{version}-py%{python3_version}.egg-info
 
 %changelog
+* Mon Nov 27 2017 Marek Cermak <macermak@redhat.com> - 1.4.0-2
+- reformat setup.cfg
+
 * Tue Sep 19 2017 Marek Cermak <macermak@redhat.com> - 1.4.0-1
 - new version 1.4.0
 
