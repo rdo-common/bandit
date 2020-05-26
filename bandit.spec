@@ -4,7 +4,7 @@
 
 Name: bandit
 Version: 1.4.0
-Release: 12%{?dist}
+Release: 13%{?dist}
 Summary: A framework for performing security analysis of Python source code
 License: ASL 2.0
 URL: https://wiki.openstack.org/wiki/Security/Projects/Bandit
@@ -58,6 +58,9 @@ tox -epy27
 %{python3_sitelib}/%{name}-%{version}-py%{python3_version}.egg-info
 
 %changelog
+* Tue May 26 2020 Miro Hrončok <mhroncok@redhat.com> - 1.4.0-13
+- Rebuilt for Python 3.9
+
 * Tue Jan 28 2020 Fedora Release Engineering <releng@fedoraproject.org> - 1.4.0-12
 - Rebuilt for https://fedoraproject.org/wiki/Fedora_32_Mass_Rebuild
 
