@@ -3,7 +3,7 @@
 %global with_tests 0
 
 Name: bandit
-Version: 1.6.2
+Version: 1.6.3
 Release: 1%{?dist}
 Summary: A framework for performing security analysis of Python source code
 License: ASL 2.0
@@ -54,6 +54,9 @@ tox -epy27
 %{python3_sitelib}/%{name}-%{version}-py%{python3_version}.egg-info
 
 %changelog
+* Sun Dec 06 2020 Mikel Olasagasti Uranga <mikel@olasagasti.info> - 1.6.3-1
+- Version bump
+
 * Tue Oct 06 2020 Mikel Olasagasti Uranga <mikel@olasagasti.info> - 1.6.2-1
 - Version bump
 
