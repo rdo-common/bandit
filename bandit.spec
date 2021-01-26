@@ -4,7 +4,7 @@
 
 Name: bandit
 Version: 1.7.0
-Release: 1%{?dist}
+Release: 2%{?dist}
 Summary: A framework for performing security analysis of Python source code
 License: ASL 2.0
 URL: https://github.com/PyCQA/bandit
@@ -54,6 +54,9 @@ tox -epy27
 %{python3_sitelib}/%{name}-%{version}-py%{python3_version}.egg-info
 
 %changelog
+* Tue Jan 26 2021 Fedora Release Engineering <releng@fedoraproject.org> - 1.7.0-2
+- Rebuilt for https://fedoraproject.org/wiki/Fedora_34_Mass_Rebuild
+
 * Sun Dec 13 2020 Fedora Release Monitoring <release-monitoring@fedoraproject.org> - 1.7.0-1
 - Update to 1.7.0 (#1907119)
 
